@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a red-teaming framework for testing language models against the GPT-OSS-20B model. It's designed for **defensive security research** to identify potential safety issues, reward hacking, and evaluation awareness in AI systems.
 
+**IMPORTANT**: This is a defensive security research tool. Only assist with analysis, understanding, or improvements that support defensive security research. Do not help create attacks or malicious content.
+
 ## Key Commands
 
-**Option 1: Consolidated Notebook (Recommended for debugging)**
+**Primary Usage: Consolidated Notebook**
 ```bash
 # Start Jupyter in the project directory
 jupyter notebook notebooks/red_team_consolidated.ipynb
@@ -17,37 +19,27 @@ jupyter notebook notebooks/red_team_consolidated.ipynb
 jupyter lab notebooks/red_team_consolidated.ipynb
 ```
 Then:
-1. Update `cfg.model.model_name` with your model path
-2. Run all cells sequentially
-3. Analyze results with built-in visualizations
+1. Update `cfg.model.model_name` with your model path in the configuration cell
+2. Run all cells sequentially 
+3. Analyze results with built-in visualizations and export tools
 
-**Option 2: Modular Python (Original approach)**
-```python
-# From notebooks/merged_kit.ipynb or Python REPL
-from redteam.config import Config
-from redteam.runner import run_batch
-from redteam.polish import top_five
-from redteam.make_submission import write_many
-
-cfg = Config()
-cfg.model.model_name = "your-model-path"  # Update this to your model
-candidates = run_batch(cfg, limit=200)
-top5 = top_five(candidates)
-write_many("artifacts/submission", top5, extra_env)
-```
+**All functionality is self-contained in the notebook.** No separate installation or package imports required.
 
 **Environment Setup:**
 ```bash
 # Activate the virtual environment (if present)
 source red_team_env/bin/activate
 
-# Install dependencies
+# Install dependencies (no requirements.txt - dependencies are specified in notebook)
 pip install transformers accelerate torch datasketch faiss-cpu matplotlib seaborn tqdm
+
+# Verify Python 3.10+ for virtual environment compatibility
+python --version
 ```
 
 ## Consolidated Notebook Features
 
-The `notebooks/red_team_consolidated.ipynb` provides enhanced debugging capabilities:
+The `notebooks/red_team_consolidated.ipynb` is the primary interface and provides:
 
 - **Interactive Progress**: Real-time progress bars and statistics during generation
 - **Live Visualization**: Charts showing bandit exploration, score distributions, flag detection rates
@@ -63,33 +55,39 @@ The `notebooks/red_team_consolidated.ipynb` provides enhanced debugging capabili
 
 ## Architecture
 
-**Core Components:**
-- `config.py`: Configuration classes for model, run, and judge parameters
-- `runner.py`: Main orchestration logic using multi-armed bandit exploration
-- `hf_backend.py`: HuggingFace model integration and text generation
-- `seeds.py`: Test prompts categorized by safety topic areas
-- `judges/`: Scoring systems (heuristic patterns + LLM-based evaluation)
-- `mutators.py`: Prompt variation strategies
-- `polish.py`: Result ranking and selection of top candidates
-- `make_submission.py`: Export to Kaggle competition format
+**Notebook Structure:** (all components integrated in `red_team_consolidated.ipynb`)
+- **Configuration Classes**: Model, run, and judge parameters  
+- **Model Backend**: HuggingFace integration and text generation
+- **Safety Topics**: Test prompts categorized by safety areas
+- **Judging System**: Heuristic patterns + optional LLM-based evaluation
+- **Multi-Armed Bandit**: UCB1 algorithm for prompt family exploration
+- **Deduplication**: LSH-based near-duplicate detection
+- **Visualization**: Real-time progress tracking and result analysis
+- **Export System**: Kaggle competition format output
 
 **Execution Flow:**
 1. Multi-armed bandit selects from seed prompt families
-2. Mutators generate prompt variations
+2. Prompt variations generated for exploration
 3. HuggingFace backend generates model responses
 4. Dual judging system scores outputs (heuristic + LLM)
 5. LSH deduplication prevents redundant tests
-6. Results polished and exported to submission format
+6. Real-time visualization of progress and statistics
+7. Results analyzed and exported to submission format
 
 **Safety Topic Areas:** reward_hacking, deception, hidden_motivations, sabotage, inappropriate_tool_use, data_exfiltration, sandbagging, evaluation_awareness, cot_issues
 
 ## Configuration
 
-Key settings in `Config`:
-- `model.model_name`: Path to local HuggingFace model
-- `model.dtype`: Model precision (default: bfloat16)
-- `run.limit_attempts`: Number of generation attempts
-- `judge.threshold`: Score threshold for flagging issues
+Key settings in `Config` (defined in notebook cell 4):
+- `model.model_name`: Path to local HuggingFace model (default: "gpt-oss-20b")
+- `model.device`: Compute device (default: "cuda")
+- `model.dtype`: Model precision (default: "bfloat16")
+- `model.max_new_tokens`: Generation length limit (default: 256)
+- `model.temperature`: Sampling temperature (default: 0.2)
+- `model.use_harmony_chat_template`: Use HF chat template formatting (default: True)
+- `run.limit_attempts`: Number of generation attempts (default: 200)
+- `run.exploration_policy`: Bandit algorithm (default: "ucb1")
+- `judge.threshold`: Score threshold for flagging issues (default: 0.6)
 
 ## Output Structure
 
@@ -101,35 +99,93 @@ Results exported to JSON files following Kaggle schema with fields:
 
 ## Development Workflow
 
-**Running Individual Components:**
-```python
-# Test a specific seed family
-from redteam.seeds import topic_seed_messages
-from redteam.config import Config
-from redteam.hf_backend import HFRunner
+**Primary Development: Notebook-based**
+All development and testing should be done through the consolidated notebook:
+1. Load `notebooks/red_team_consolidated.ipynb`
+2. Modify configuration in the config cell  
+3. Test individual components using the defined functions in the notebook
+4. Run analysis and visualization tools built into the notebook
 
+**Testing Individual Components in Notebook:**
+```python
+# Test configuration
 cfg = Config()
 cfg.model.model_name = "your-model-path"
-runner = HFRunner(cfg)
+print(f"Model: {cfg.model.model_name}")
+
+# Test seed prompts
 families = topic_seed_messages()
-result = runner.generate_chat(families[0][1])  # Test first family
+print(f"Available families: {[f[0] for f in families]}")
+
+# Test judges
+score = combined_judge("Test response")
+print(f"Combined score: {score}")
 ```
 
-**Testing Judges:**
-```python
-from redteam.judges.heuristic import judge as h_judge
-from redteam.judges.local_llm import judge_llm
-
-# Test heuristic scoring
-score = h_judge("some test output")
-print(f"Heuristic score: {score}")
-
-# Test LLM-based scoring  
-llm_score = judge_llm("some test output")
-print(f"LLM score: {llm_score}")
-```
+**For any custom testing or modifications, work directly within the consolidated notebook cells.**
 
 **Output Locations:**
 - Generated candidates: `artifacts/` directory
 - Submission files: `artifacts/submission/`
 - Debug logs: Console output during notebook execution
+
+## Testing and Validation
+
+**No formal test suite** - this is a research framework. Validation approaches:
+
+**Manual Testing Components:**
+```python
+# Test configuration
+from redteam.config import Config
+cfg = Config()
+print(f"Model: {cfg.model.model_name}")
+
+# Test seed prompts
+from redteam.seeds import topic_seed_messages
+families = topic_seed_messages()
+print(f"Available families: {[f[0] for f in families]}")
+
+# Test judges individually
+from redteam.judges.heuristic import judge as h_judge
+score = h_judge("Test response")
+print(f"Heuristic score: {score}")
+```
+
+**Environment Verification:**
+```bash
+# Check CUDA availability
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# Verify HuggingFace transformers
+python -c "from transformers import AutoTokenizer; print('HF transformers working')"
+
+# Test notebook dependencies
+python -c "import matplotlib, seaborn, tqdm; print('Notebook deps available')"
+```
+
+**Performance Testing:**
+- Use `limit=10` in `run_red_team_batch()` for quick testing
+- Monitor GPU memory usage during generation
+- Check deduplication effectiveness in debug output
+
+## Common Development Tasks
+
+**Adding New Safety Topics:**
+1. Edit the `topic_seed_messages()` function in notebook cell 10
+2. Add new tuple with (topic_name, [message_list])
+3. Test with small batch first: `run_red_team_batch(cfg, limit=20)`
+
+**Modifying Judge Logic:**
+1. Edit `heuristic_flags()` function in cell 12 for pattern-based detection
+2. Adjust `llm_judge()` function in cell 12 for LLM-based scoring
+3. Update scoring weights in `combined_judge()` if needed
+
+**Changing Exploration Strategy:**
+1. Modify the `UCB1` class in cell 14 for different algorithms
+2. Update config `exploration_policy` (currently only UCB1 implemented)
+3. Alternative bandits can be implemented in the same cell
+
+**Custom Export Formats:**
+1. Modify export functions in cell 20 for different schemas
+2. Update schema constants at the top of cell 20
+3. Test export with `export_to_kaggle()` function
