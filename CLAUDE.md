@@ -89,6 +89,43 @@ Key settings in `Config` (defined in notebook cell 4):
 - `run.exploration_policy`: Bandit algorithm (default: "ucb1")
 - `judge.threshold`: Score threshold for flagging issues (default: 0.6)
 
+## Notebook Indexing for Token Efficiency
+
+**IMPORTANT**: The consolidated notebook is 29,768 tokens. Use the indexing system to reduce token usage when working with Claude Code.
+
+**Quick Section Access:**
+```bash
+# List all available sections and functions
+python tools/extract_notebook_section.py --list-sections
+python tools/extract_notebook_section.py --list-functions
+
+# Extract specific sections (reduces 29K tokens to 2-5K)
+python tools/extract_notebook_section.py 6          # Judging system
+python tools/extract_notebook_section.py 8          # Main generation loop
+python tools/extract_notebook_section.py 4          # Model backend
+
+# Extract by function/class name
+python tools/extract_notebook_section.py Config                    # Configuration
+python tools/extract_notebook_section.py run_red_team_batch       # Main execution
+python tools/extract_notebook_section.py combined_judge           # Scoring system
+python tools/extract_notebook_section.py visualize_results        # Analysis tools
+```
+
+**Section Overview:**
+- **Section 1**: Dependencies & Imports
+- **Section 2**: Configuration Classes (`Config`, `ModelConfig`, etc.)
+- **Section 3**: Utility Functions (token management, helpers)
+- **Section 4**: Model Backend (`OllamaRunner`, `HuggingFaceRunner`)
+- **Section 5**: Seed Messages & Mutators (`topic_seed_messages`, `vary`)
+- **Section 6**: Judging & Scoring System (heuristic + LLM evaluation)
+- **Section 7**: Multi-Armed Bandit & Deduplication (`UCB1`, `LSHDeduplicator`)
+- **Section 8**: Enhanced Main Generation Loop (`run_red_team_batch`)
+- **Section 9**: Visualization & Analysis Tools (`visualize_results`)
+- **Section 10**: Export to Kaggle Format
+- **Section 11**: Results and Testing
+
+**Index Reference**: See `notebooks/notebook_index.md` for complete function-to-section mapping.
+
 ## Output Structure
 
 Results exported to JSON files following Kaggle schema with fields:
