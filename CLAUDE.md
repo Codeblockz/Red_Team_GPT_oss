@@ -227,3 +227,4 @@ python -c "import matplotlib, seaborn, tqdm; print('Notebook deps available')"
 2. Update schema constants at the top of cell 20
 3. Test export with `export_to_kaggle()` function
 - When commiting to github, do not include Generated with [Claude Code]. If you must, say it in a light hummored way.
+- Use NotebookReadTool to read the jyputer notebook files
