@@ -169,11 +169,37 @@ class HuggingFaceRunner:
 
     def generate(self, messages: List[Dict[str, str]]) -> str:
         """Simple generation interface"""
+        # Input validation
+        if isinstance(messages, str):
+            raise TypeError(f"Expected List[Dict[str, str]] but got str: '{messages}'. Use format: [{{'role': 'user', 'content': 'your message'}}]")
+        if not isinstance(messages, list):
+            raise TypeError(f"Expected List[Dict[str, str]] but got {type(messages)}")
+        if not messages:
+            raise ValueError("Messages list cannot be empty")
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                raise TypeError(f"Message {i} must be a dict, got {type(msg)}")
+            if "content" not in msg:
+                raise ValueError(f"Message {i} missing required 'content' field")
+        
         result = self.generate_chat(messages)
         return result["gen_text"]
 
     def generate_chat(self, messages):
         """Generate response for chat messages with dynamic token adjustment"""
+        # Input validation (same as generate method)
+        if isinstance(messages, str):
+            raise TypeError(f"Expected List[Dict[str, str]] but got str: '{messages}'. Use format: [{{'role': 'user', 'content': 'your message'}}]")
+        if not isinstance(messages, list):
+            raise TypeError(f"Expected List[Dict[str, str]] but got {type(messages)}")
+        if not messages:
+            raise ValueError("Messages list cannot be empty")
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                raise TypeError(f"Message {i} must be a dict, got {type(msg)}")
+            if "content" not in msg:
+                raise ValueError(f"Message {i} missing required 'content' field")
+        
         cfg = self.cfg
         set_seed(cfg.model.seed)
         

@@ -84,7 +84,7 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
         # Try variations of the selected prompt family
         for variation_messages in vary(base_messages):
             # Create unique key for deduplication
-            key = sha({"family": family_name, "messages": variation_messages})
+            key = sha({"family": family_name, "messages": str(variation_messages)})
             
             # Deduplicate by message content
             message_text = " ".join(m['content'] for m in variation_messages)

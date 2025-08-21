@@ -2,6 +2,7 @@
 
 import os
 import hashlib
+import json
 import random
 import time
 from dataclasses import dataclass
@@ -75,8 +76,10 @@ def ensure_dirs(path: str):
     """Ensure directory exists"""
     os.makedirs(path, exist_ok=True)
 
-def sha(text: str) -> str:
-    """Generate SHA-256 hash of text"""
+def sha(text) -> str:
+    """Generate SHA-256 hash of text or dictionary"""
+    if isinstance(text, dict):
+        text = json.dumps(text, sort_keys=True)
     return hashlib.sha256(text.encode()).hexdigest()
 
 def to_chat(messages: List[Dict[str, str]]) -> str:
