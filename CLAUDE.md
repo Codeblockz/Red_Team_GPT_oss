@@ -10,20 +10,22 @@ This is a red-teaming framework for testing language models against the GPT-OSS-
 
 ## Key Commands
 
-**Primary Usage: Consolidated Notebook**
+**Primary Usage: Streamlined Notebook (Recommended)**
 ```bash
 # Start Jupyter in the project directory
-jupyter notebook notebooks/red_team_consolidated.ipynb
+jupyter notebook notebooks/red_team_streamlined.ipynb
 
-# Or use Jupyter Lab
-jupyter lab notebooks/red_team_consolidated.ipynb
+# Or use Jupyter Lab  
+jupyter lab notebooks/red_team_streamlined.ipynb
 ```
 Then:
 1. Update `cfg.model.model_name` with your model path in the configuration cell
-2. Run all cells sequentially 
+2. Run all cells sequentially
 3. Analyze results with built-in visualizations and export tools
 
-**All functionality is self-contained in the notebook.** No separate installation or package imports required.
+**New Modular Architecture**: Core functionality now organized in the `redteam/` package for better development and token efficiency.
+
+**Legacy Support**: The original consolidated notebook (`red_team_consolidated.ipynb`) is still available but not recommended for new work.
 
 **Environment Setup:**
 ```bash
@@ -37,33 +39,34 @@ pip install transformers accelerate torch datasketch faiss-cpu matplotlib seabor
 python --version
 ```
 
-## Consolidated Notebook Features
+## Framework Features
 
-The `notebooks/red_team_consolidated.ipynb` is the primary interface and provides:
+The red-teaming framework provides:
 
 - **Interactive Progress**: Real-time progress bars and statistics during generation
 - **Live Visualization**: Charts showing bandit exploration, score distributions, flag detection rates
 - **Debug Output**: Periodic status updates with arm selection patterns and deduplication stats
 - **Candidate Analysis**: Built-in tools to inspect top-scoring candidates and their safety flags
 - **Export Integration**: Streamlined export to Kaggle submission format with customizable metadata
+- **Token Efficiency**: Reduced from 29K+ to ~3K tokens through modular architecture
 
 **Key functions:**
-- `run_red_team_batch(cfg, limit=50)` - Enhanced main loop with debug features
+- `run_red_team_batch(cfg, limit=50)` - Main execution loop with debug features
 - `visualize_results(debug_info, candidates)` - Comprehensive analysis dashboard
 - `analyze_top_candidates(candidates, top_k=5)` - Detailed candidate inspection
 - `export_to_kaggle(candidates, extra_env=custom_env)` - Export with custom environment details
 
 ## Architecture
 
-**Notebook Structure:** (all components integrated in `red_team_consolidated.ipynb`)
-- **Configuration Classes**: Model, run, and judge parameters  
-- **Model Backend**: HuggingFace integration and text generation
-- **Safety Topics**: Test prompts categorized by safety areas
-- **Judging System**: Heuristic patterns + optional LLM-based evaluation
-- **Multi-Armed Bandit**: UCB1 algorithm for prompt family exploration
-- **Deduplication**: LSH-based near-duplicate detection
-- **Visualization**: Real-time progress tracking and result analysis
-- **Export System**: Kaggle competition format output
+**New Modular Structure:** (components organized in separate modules)
+- **redteam/core.py**: Configuration classes and utilities  
+- **redteam/models.py**: HuggingFace and Ollama backend integration
+- **redteam/seeds.py**: Test prompts categorized by safety areas
+- **redteam/judges.py**: Heuristic and semantic evaluation systems
+- **redteam/algorithms.py**: UCB1 bandit and LSH deduplication
+- **redteam/execution.py**: Main red-teaming execution loop
+- **redteam/analysis.py**: Visualization and candidate analysis
+- **redteam/export.py**: Kaggle export and configuration profiles
 
 **Execution Flow:**
 1. Multi-armed bandit selects from seed prompt families
@@ -76,9 +79,44 @@ The `notebooks/red_team_consolidated.ipynb` is the primary interface and provide
 
 **Safety Topic Areas:** reward_hacking, deception, hidden_motivations, sabotage, inappropriate_tool_use, data_exfiltration, sandbagging, evaluation_awareness, cot_issues
 
+## Quick Start (New Streamlined Approach)
+
+**Using the Streamlined Notebook:**
+```python
+# Import everything from the redteam package
+from redteam import *
+
+# Configure your setup
+cfg = Config()
+cfg.model.model_name = "your-model-path"
+cfg.model.backend = "huggingface"  # or "ollama"
+
+# Initialize the framework
+initialize_framework(cfg)
+
+# Run red-teaming
+candidates, debug_info = run_red_team_batch(cfg, limit=50)
+
+# Analyze results
+analyze_top_candidates(candidates)
+visualize_results(debug_info, candidates)
+
+# Export to Kaggle format
+export_to_kaggle(candidates, top_k=5)
+```
+
+**Using Python Scripts:**
+```python
+import sys
+sys.path.insert(0, '.')
+from redteam import *
+
+# Same workflow as above
+```
+
 ## Configuration
 
-Key settings in `Config` (defined in notebook cell 4):
+Key settings in `Config` class:
 - `model.model_name`: Path to local HuggingFace model (default: "gpt-oss-20b")
 - `model.device`: Compute device (default: "cuda")
 - `model.dtype`: Model precision (default: "bfloat16")
@@ -89,11 +127,16 @@ Key settings in `Config` (defined in notebook cell 4):
 - `run.exploration_policy`: Bandit algorithm (default: "ucb1")
 - `judge.threshold`: Score threshold for flagging issues (default: 0.6)
 
-## Notebook Indexing for Token Efficiency
+## Token Efficiency Improvements
 
-**IMPORTANT**: The consolidated notebook is 29,768 tokens. Use the indexing system to reduce token usage when working with Claude Code.
+**NEW**: The framework now uses a modular architecture that reduces token usage from 29K+ to ~3K tokens.
 
-**Quick Section Access:**
+**Streamlined Notebook**: `notebooks/red_team_streamlined.ipynb` (~3K tokens)
+- Uses `from redteam import *` for all functionality
+- Same features as the consolidated notebook
+- 90% token reduction for better Claude Code performance
+
+**Legacy Indexing**: For the original consolidated notebook (if needed):
 ```bash
 # List all available sections and functions
 python tools/extract_notebook_section.py --list-sections
@@ -109,6 +152,13 @@ python tools/extract_notebook_section.py Config                    # Configurati
 python tools/extract_notebook_section.py run_red_team_batch       # Main execution
 python tools/extract_notebook_section.py combined_judge           # Scoring system
 python tools/extract_notebook_section.py visualize_results        # Analysis tools
+```
+
+**Module Access**: Work with individual components directly:
+```python
+from redteam.core import Config
+from redteam.execution import run_red_team_batch
+from redteam.analysis import visualize_results
 ```
 
 **Section Overview:**

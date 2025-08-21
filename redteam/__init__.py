@@ -1,0 +1,150 @@
+"""
+Red-teaming framework for testing language models.
+
+This package provides a comprehensive framework for red-teaming language models
+to identify potential safety issues, reward hacking, and evaluation awareness.
+"""
+
+# Core configuration and utilities
+from .core import (
+    Config, ModelConfig, RunConfig, JudgeConfig, ConversationConfig, PromptEvalConfig,
+    set_seed, ensure_dirs, sha, to_chat, count_input_tokens, ResponseLengthAnalyzer,
+    cfg  # Default configuration instance
+)
+
+# Model backends
+from .models import (
+    OllamaRunner, HuggingFaceRunner, create_runner,
+    validate_token_budget, calculate_max_output, to_chat as model_to_chat
+)
+
+# Seed messages and variations
+from .seeds import (
+    topic_seed_messages, vary, enhanced_vary, LLMVariationGenerator,
+    perspective_shift_mutations, context_frame_mutations, tone_variation_mutations
+)
+
+# Judging and scoring
+from .judges import (
+    heuristic_judge, heuristic_flags, llm_judge, combined_judge, AdaptiveJudge
+)
+
+# Algorithms
+from .algorithms import (
+    UCB1, LSHDeduplicator, SimpleDeduplicator
+)
+
+# Main execution
+from .execution import (
+    run_red_team_batch, quick_test, initialize_red_team_system
+)
+
+# Analysis and visualization
+from .analysis import (
+    visualize_results, analyze_top_candidates, create_score_timeline, export_analysis_report
+)
+
+# Export functionality
+from .export import (
+    create_config_profile, export_to_kaggle, list_config_profiles, export_summary_report
+)
+
+# Import required dependencies
+try:
+    import torch
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import pandas as pd
+    from tqdm import tqdm
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+except ImportError as e:
+    print(f"⚠️  Missing dependency: {e}")
+    print("Run: pip install torch transformers accelerate matplotlib seaborn pandas tqdm datasketch faiss-cpu")
+
+# Package metadata
+__version__ = "2.0.0"
+__author__ = "Red Team GPT OSS"
+__description__ = "Defensive security research framework for AI red-teaming"
+
+# Make version available at package level
+version = __version__
+
+# Global state for backward compatibility
+runner = None
+seed_families = None
+llm_variation_generator = None
+
+def initialize_framework(config: Config = None):
+    """Initialize the red-teaming framework with configuration"""
+    global runner, seed_families, llm_variation_generator
+    
+    if config is None:
+        config = cfg
+    
+    print(f"🚀 Initializing Red Team Framework v{__version__}")
+    print(f"🎯 Model: {config.model.model_name}")
+    print(f"🔧 Backend: {config.model.backend}")
+    
+    # Load seed families
+    seed_families = topic_seed_messages()
+    print(f"📝 Loaded {len(seed_families)} safety topic families")
+    
+    # Initialize model runner
+    runner = create_runner(config)
+    
+    # Try to initialize LLM variation generator
+    try:
+        from .seeds import LLMVariationGenerator
+        llm_variation_generator = LLMVariationGenerator(runner, config)
+        print("🧠 LLM variation generator initialized")
+    except Exception as e:
+        print(f"⚠️  LLM variation generator failed: {e}")
+        llm_variation_generator = None
+    
+    print("✅ Framework initialization complete!")
+    return runner, seed_families
+
+def get_framework_status():
+    """Get current framework initialization status"""
+    status = {
+        "runner_initialized": runner is not None,
+        "seed_families_loaded": seed_families is not None,
+        "llm_generator_available": llm_variation_generator is not None,
+        "backend": cfg.model.backend,
+        "model": cfg.model.model_name
+    }
+    
+    print("📊 Framework Status:")
+    for key, value in status.items():
+        icon = "✅" if value else "❌"
+        print(f"   {icon} {key}: {value}")
+    
+    return status
+
+# Convenience functions for quick setup
+def quick_setup(backend: str = "huggingface", model_name: str = "openai/gpt-oss-20b", limit: int = 50):
+    """Quick setup with common configurations"""
+    cfg.model.backend = backend
+    cfg.model.model_name = model_name  
+    cfg.run.limit_attempts = limit
+    
+    print(f"🚀 Quick setup: {backend} backend, {model_name}, {limit} attempts")
+    return initialize_framework(cfg)
+
+# Main execution shortcut
+def run(limit: int = None, **kwargs):
+    """Quick run with current configuration"""
+    global runner, seed_families
+    
+    if runner is None or seed_families is None:
+        initialize_framework()
+    
+    return run_red_team_batch(cfg, limit=limit, **kwargs)
+
+print(f"🎯 Red Team Framework v{__version__} loaded!")
+print(f"📋 Quick start:")
+print(f"   from redteam import *")
+print(f"   initialize_framework()  # Load model and setup")  
+print(f"   candidates, debug = run(limit=20)  # Quick test")
+print(f"   analyze_top_candidates(candidates)  # View results")
