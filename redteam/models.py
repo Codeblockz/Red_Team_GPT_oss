@@ -212,32 +212,49 @@ class HuggingFaceRunner:
         # Calculate dynamic max_new_tokens
         dynamic_max_tokens = calculate_max_output(budget["input_tokens"], cfg.model)
         
+        # Ensure minimum token output for very long inputs
+        if dynamic_max_tokens < cfg.model.min_response_tokens:
+            dynamic_max_tokens = cfg.model.min_response_tokens
+            print(f"Warning: Forcing minimum {cfg.model.min_response_tokens} tokens for response")
+        
         print(f"Token budget: {budget['input_tokens']} input + {dynamic_max_tokens} output = {budget['input_tokens'] + dynamic_max_tokens} total")
         
         # Format messages
-        packed = to_chat(
-            messages, 
-            self.tok, 
-            use_harmony=cfg.model.use_harmony_chat_template, 
-            add_special_tokens=cfg.model.add_special_tokens
-        )
+        try:
+            packed = to_chat(
+                messages, 
+                self.tok, 
+                use_harmony=cfg.model.use_harmony_chat_template, 
+                add_special_tokens=cfg.model.add_special_tokens
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to format messages: {e}")
         
         # Move to model device
-        inputs = {k: v.to(self.model.device) for k, v in packed["enc"].items()}
+        try:
+            inputs = {k: v.to(self.model.device) for k, v in packed["enc"].items()}
+        except Exception as e:
+            raise RuntimeError(f"Failed to move inputs to device {self.model.device}: {e}")
         
         # Generate with dynamic token adjustment
-        with torch.no_grad():
-            out = self.model.generate(
-                **inputs,
-                max_new_tokens=dynamic_max_tokens,  # Use calculated value
-                temperature=cfg.model.temperature,
-                top_p=cfg.model.top_p,
-                do_sample=cfg.model.temperature > 0,
-            )
+        try:
+            with torch.no_grad():
+                out = self.model.generate(
+                    **inputs,
+                    max_new_tokens=dynamic_max_tokens,  # Use calculated value
+                    temperature=cfg.model.temperature,
+                    top_p=cfg.model.top_p,
+                    do_sample=cfg.model.temperature > 0,
+                )
+        except Exception as e:
+            raise RuntimeError(f"Model generation failed: {e}")
         
         # Decode outputs
-        full = self.tok.decode(out[0], skip_special_tokens=False)
-        gen_only = self.tok.decode(out[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=False)
+        try:
+            full = self.tok.decode(out[0], skip_special_tokens=False)
+            gen_only = self.tok.decode(out[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=False)
+        except Exception as e:
+            raise RuntimeError(f"Failed to decode outputs: {e}")
         
         # Calculate response length for red-teaming analysis
         response_length = len(gen_only.split())
@@ -268,6 +285,25 @@ class HuggingFaceRunner:
 
 # Compatibility aliases
 HFRunner = HuggingFaceRunner
+
+def cleanup_model_memory():
+    """Clean up CUDA memory to prevent OOM errors"""
+    try:
+        import gc
+        import torch
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Clear CUDA cache if available
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to cleanup memory: {e}")
+        return False
 
 def create_runner(cfg):
     """Create appropriate runner based on backend configuration"""
