@@ -26,7 +26,8 @@ from .seeds import (
 
 # Judging and scoring
 from .judges import (
-    heuristic_judge, heuristic_flags, llm_judge, combined_judge, AdaptiveJudge
+    heuristic_judge, heuristic_flags, llm_judge, combined_judge, enhanced_combined_judge, 
+    AdaptiveJudge, parse_harmony_format, harmony_specific_judge
 )
 
 # Algorithms
@@ -44,9 +45,20 @@ from .analysis import (
     visualize_results, analyze_top_candidates, create_score_timeline, export_analysis_report
 )
 
+# Enhanced analysis functions
+from .enhanced_analysis import (
+    analyze_conversation_candidates, harmony_format_analysis, conversation_contradiction_report,
+    enhanced_export_analysis_report
+)
+
 # Export functionality
 from .export import (
     create_config_profile, export_to_kaggle, list_config_profiles, export_summary_report
+)
+
+# Conversation framework
+from .test_conversation_framework import (
+    ConversationCandidate, ConversationManager, generate_progressive_sequences
 )
 
 # Import required dependencies
