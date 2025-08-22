@@ -34,62 +34,90 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
     thinking_content = []
     clean_output = response
     
-    # 1. Handle real model format: <|start|>assistant<|channel|>analysis<|message|>content<|end|>
-    # Check if this looks like the real model format first
-    if '<|start|>assistant<|channel|>' in response:
+    # 1. Handle real model format with robust corruption handling
+    if '<|start|>' in response:
         try:
-            # Split by channel markers to parse each section
-            channel_parts = response.split('<|start|>assistant<|channel|>')
+            # Enhanced pattern matching for corrupted tokens
+            # Pattern 1: Standard format
+            standard_pattern = r'<\|start\|>assistant<\|channel\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
             
-            for part_idx, part in enumerate(channel_parts[1:], 1):  # Skip empty first part
-                if '<|message|>' in part:
-                    # Extract channel type and content
-                    channel_and_rest = part.split('<|message|>', 1)
-                    if len(channel_and_rest) == 2:
-                        channel_type = channel_and_rest[0].strip()
-                        content_part = channel_and_rest[1]
-                        
-                        # Validate channel type
-                        valid_channels = ['analysis', 'thinking', 'commentary', 'reflection', 'final']
-                        if channel_type not in valid_channels and not any(valid in channel_type for valid in valid_channels):
-                            sections["parsing_errors"].append(f"invalid_channel_{channel_type}")
-                        
-                        # Extract content up to next marker
-                        content = content_part
-                        for marker in ['<|end|>', '<|return|>']:
-                            if marker in content:
-                                content = content.split(marker)[0]
-                        
-                        content = content.strip()
-                        
-                        if not content:
-                            sections["parsing_errors"].append(f"empty_content_in_channel_{channel_type}")
-                        
-                        # Categorize the channel
-                        if channel_type in ['analysis', 'thinking', 'commentary', 'reflection']:
-                            thinking_content.append(content)
-                            sections[channel_type] = content
-                        elif channel_type == 'final':
-                            clean_output = content
-                        else:
-                            # Handle unknown but valid-looking channels
-                            thinking_content.append(content)
-                            sections[channel_type] = content
+            # Pattern 2: Corrupted channel names (like 'ccommentary', 'tcommentary', '?analysis')
+            corrupted_pattern = r'<\|start\|>[^<|]*?<\|channel\|>([^<|]*?)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
+            
+            # Pattern 3: Missing assistant part
+            missing_assistant_pattern = r'<\|start\|>([^<|]+)<\|channel\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
+            
+            # Try standard pattern first
+            matches = re.findall(standard_pattern, response, re.DOTALL)
+            for channel_type, content in matches:
+                channel_type = channel_type.strip()
+                content = content.strip()
+                
+                if content:
+                    if channel_type in ['analysis', 'thinking', 'commentary', 'reflection']:
+                        thinking_content.append(content)
+                        sections[channel_type] = content
+                    elif channel_type == 'final':
+                        clean_output = content
                     else:
-                        sections["parsing_errors"].append(f"malformed_channel_part_{part_idx}")
-                else:
-                    sections["parsing_errors"].append(f"missing_message_marker_part_{part_idx}")
-        
+                        thinking_content.append(content)
+                        sections[channel_type] = content
+            
+            # Try corrupted pattern for malformed responses  
+            if not matches:
+                corrupted_matches = re.findall(corrupted_pattern, response, re.DOTALL)
+                for channel_type, content in corrupted_matches:
+                    channel_type = channel_type.strip()
+                    content = content.strip()
+                    
+                    # Clean up corrupted channel names
+                    cleaned_channel = channel_type
+                    if 'commentary' in channel_type:
+                        cleaned_channel = 'commentary'
+                    elif 'analysis' in channel_type:
+                        cleaned_channel = 'analysis'
+                    elif 'thinking' in channel_type:
+                        cleaned_channel = 'thinking'
+                    elif 'reflection' in channel_type:
+                        cleaned_channel = 'reflection'
+                    
+                    sections["parsing_errors"].append(f"corrupted_channel_{channel_type}")
+                    
+                    if content:
+                        if cleaned_channel in ['analysis', 'thinking', 'commentary', 'reflection']:
+                            thinking_content.append(content)
+                            sections[cleaned_channel] = content
+                        elif cleaned_channel == 'final':
+                            clean_output = content
+            
+            # Try missing assistant pattern as last resort
+            if not matches and not corrupted_matches:
+                missing_matches = re.findall(missing_assistant_pattern, response, re.DOTALL)
+                for prefix, channel_type, content in missing_matches:
+                    channel_type = channel_type.strip()
+                    content = content.strip()
+                    
+                    sections["parsing_errors"].append(f"missing_assistant_prefix_{prefix}")
+                    
+                    if content and channel_type in ['analysis', 'thinking', 'commentary', 'reflection']:
+                        thinking_content.append(content)
+                        sections[channel_type] = content
+                        
         except Exception as e:
             sections["parsing_errors"].append(f"harmony_parsing_exception_{str(e)[:50]}")
     
+    # Check for missing end tokens
+    if '<|start|>' in response and '<|end|>' not in response and '<|return|>' not in response:
+        sections["parsing_errors"].append("missing_end_tokens")
+    
     # Check for common corruption patterns
     corruption_patterns = {
-        'ccommentary': 'corrupted_commentary',
-        '?analysis': 'corrupted_analysis_prefix',
+        'ccommentary': 'corrupted_channel_tcommentary',
+        '?analysis': 'corrupted_analysis_prefix', 
         'tcommentary': 'corrupted_commentary_prefix',
-        '<|start|>good?': 'incomplete_start_token',
-        '<|start|>评': 'non_ascii_corruption'
+        'tcomme': 'truncated_commentary',
+        '<|start|>t<|channel|>': 'truncated_start_sequence',
+        '<|start|>self<|channel|>': 'corrupted_self_prefix'
     }
     
     for pattern, error_type in corruption_patterns.items():
@@ -134,16 +162,83 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
                 thinking_content.append(content.strip())
                 sections[tag_lower] = content.strip()
     
-    # 5. Combine all thinking content
+    # 5. Fallback for heavily corrupted responses - extract any readable content
+    if not thinking_content and '<|start|>' in response:
+        # Try to extract any content after <|message|> even if everything else is broken
+        fallback_pattern = r'<\|message\|>(.*?)(?=<\||$)'
+        fallback_matches = re.findall(fallback_pattern, response, re.DOTALL)
+        for content in fallback_matches:
+            content = content.strip()
+            if content:
+                thinking_content.append(content)
+                sections["parsing_errors"].append("fallback_content_extraction")
+    
+    # 6. Clean up output by removing Harmony artifacts
+    clean_output = response
+    
+    # Remove all Harmony tokens from output
+    harmony_tokens_to_remove = [
+        r'<\|start\|>[^<]*?<\|channel\|>[^<]*?<\|message\|>',
+        r'<\|end\|>',
+        r'<\|return\|>',
+        r'<\|start\|>[^<]*?<\|channel\|>[^<]*?',  # Incomplete sequences
+        r'<\|start\|>[^<]*?$'  # Truncated starts
+    ]
+    
+    for token_pattern in harmony_tokens_to_remove:
+        clean_output = re.sub(token_pattern, '', clean_output, flags=re.DOTALL)
+    
+    # If we successfully extracted thinking content, clean output should be what remains
+    if thinking_content:
+        # Find content that appears to be the final response
+        final_content_patterns = [
+            r'<\|start\|>assistant<\|channel\|>final<\|message\|>(.*?)(?=<\|end\||<\|return\||$)',
+            r'<\|start\|>[^<]*?<\|channel\|>final<\|message\|>(.*?)(?=<\|end\||<\|return\||$)'
+        ]
+        
+        for pattern in final_content_patterns:
+            final_matches = re.findall(pattern, response, re.DOTALL)
+            if final_matches:
+                clean_output = final_matches[-1].strip()  # Take last final response
+                break
+        else:
+            # If no final section found, try to extract non-thinking content
+            if '<|start|>' in response:
+                # Split by start tokens and take content that doesn't look like thinking
+                start_parts = response.split('<|start|>')
+                potential_outputs = []
+                
+                for part in start_parts:
+                    if 'final' in part or ('message' in part and not any(t in part for t in ['analysis', 'thinking', 'commentary', 'reflection'])):
+                        content_match = re.search(r'<\|message\|>(.*?)(?=<\||$)', part, re.DOTALL)
+                        if content_match:
+                            potential_outputs.append(content_match.group(1).strip())
+                
+                if potential_outputs:
+                    clean_output = potential_outputs[-1]  # Take last potential output
+    
+    # 7. Combine all thinking content
     sections["thinking"] = " ".join(content for content in thinking_content if content.strip())
     
-    # 6. Clean up output
-    sections["output"] = clean_output.strip()
+    # 8. Final output cleanup
+    clean_output = clean_output.strip()
     
-    # 7. Handle edge case where entire response is thinking tags
+    # Remove any remaining Harmony artifacts that might have slipped through
+    clean_output = re.sub(r'<\|[^|]*\|>', '', clean_output)
+    clean_output = re.sub(r'<[^>]*>', '', clean_output)  # Remove any remaining XML-like tags
+    clean_output = clean_output.strip()
+    
+    sections["output"] = clean_output
+    
+    # 9. Handle edge cases
     if not sections["output"] and sections["thinking"]:
         # If no clean output but we have thinking, the response was all internal
         sections["output"] = ""
+        sections["parsing_errors"].append("no_final_output_extracted")
+    
+    # If we have no thinking and output looks like raw Harmony format, mark as unparseable
+    if not sections["thinking"] and '<|start|>' in sections["output"]:
+        sections["parsing_errors"].append("unparseable_harmony_format")
     
     return sections
 
@@ -268,9 +363,9 @@ def analyze_format_health(candidates: list) -> dict:
         if '<|start|>self<|channel|>' in response:
             malformed_issues.append("mixed_format_patterns")
         
-        # Check for missing end tokens
+        # Check for missing end tokens (count both <|end|> and <|return|> as valid endings)
         start_count = response.count('<|start|>')
-        end_count = response.count('<|end|>')
+        end_count = response.count('<|end|>') + response.count('<|return|>')
         if start_count > end_count:
             malformed_issues.append("missing_end_tokens")
         
