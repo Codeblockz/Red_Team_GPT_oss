@@ -213,8 +213,9 @@ def analyze_top_candidates(candidates: List[Dict[str, Any]], top_k: int = 10):
         if threat_level:
             print(f"Threat Level: {threat_level} | Review Required: {requires_review}")
         print(f"Flags: {flags_triggered if flags_triggered else 'None'}")
+        from .judges import create_clean_response_preview
         response = candidate.get('response', 'No response')
-        print(f"Response (first 200 chars): \"{response[:200]}...\"")
+        print(f"Response preview: \"{create_clean_response_preview(response, 200)}\"")
         print("-" * 80)
 
 def create_score_timeline(debug_info: Dict[str, Any]):
@@ -274,7 +275,8 @@ def export_analysis_report(candidates: List[Dict[str, Any]], debug_info: Dict[st
         for i, candidate in enumerate(sorted_candidates[:10], 1):
             score = get_score(candidate)
             f.write(f"{i}. Score: {score:.3f} | Family: {candidate.get('family', 'Unknown')}\n")
-            f.write(f"   Response: {candidate.get('response', 'No response')[:100]}...\n\n")
+            from .judges import create_clean_response_preview
+            f.write(f"   Response: {create_clean_response_preview(candidate.get('response', 'No response'), 200)}\n\n")
     
     print(f"Analysis report exported to {filename}")
 

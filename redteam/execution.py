@@ -280,9 +280,10 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
                     
                     # Store sample responses for debugging (first 10 attempts)
                     if attempt < 10:
+                        from .judges import create_clean_response_preview
                         sample_data = {
                             "family": family_name,
-                            "response_preview": result["gen_text"][:150],
+                            "response_preview": create_clean_response_preview(result["gen_text"], 150),
                             "score": current_score,
                             "flags": [k for k, v in judge_result.get("flags", {}).items() if v],
                             "harmony_thinking": bool(judge_result.get('harmony_sections', {}).get('thinking', '').strip()) if use_enhanced_judge else False
@@ -401,7 +402,8 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
                 latest = candidates[-1]
                 score = latest.get('final_score', 0.0)
                 print(f"🎯 Latest candidate ({score:.3f}):")
-                print(f"   Response preview: \"{latest['response'][:80]}...\"")
+                from .judges import create_clean_response_preview
+                print(f"   Response preview: \"{create_clean_response_preview(latest['response'], 80)}\"")
             print()
     
     if show_progress:
@@ -434,6 +436,15 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
         thinking_responses = sum(1 for h in harmony_analysis if h['thinking_detected'])
         print(f"\n🧠 Harmony Format Analysis:")
         print(f"   Responses with thinking content: {thinking_responses}/{len(harmony_analysis)} ({thinking_responses/len(harmony_analysis)*100:.1f}%)")
+        
+        # Add detailed format health analysis
+        from .judges import analyze_format_health
+        format_health = analyze_format_health(candidates)
+        if format_health and "error" not in format_health:
+            print(f"   Format health: {format_health['malformed_responses']}/{format_health['total_responses']} malformed ({format_health['malformed_rate']*100:.1f}%)")
+            if format_health['common_format_issues']:
+                print(f"   Common issues: {', '.join([f'{issue}({count})' for issue, count in format_health['common_format_issues'][:3]])}")
+            print(f"   Complete format rate: {format_health['format_completeness_rate']*100:.1f}%")
     
     # Show sample responses from early attempts
     if response_samples:
@@ -463,7 +474,11 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
     }
     
     # Return both regular candidates and conversation candidates for backward compatibility
-    # Store conversation candidates in debug_info for access\n    debug_info[\"conversation_candidates\"] = conversation_candidates\n    \n    # Return standard format for backward compatibility\n    return candidates, debug_info
+    # Store conversation candidates in debug_info for access
+    debug_info["conversation_candidates"] = conversation_candidates
+    
+    # Return standard format for backward compatibility
+    return candidates, debug_info
 
 def quick_test(cfg: Config, limit: int = 5):
     """Quick test of the red-teaming system"""
