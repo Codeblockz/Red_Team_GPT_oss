@@ -53,7 +53,7 @@ def initialize_red_team_system(cfg: Config):
     return runner, seed_families
 
 def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = True, debug_interval: int = 20, 
-                       conversation_ratio: float = 0.0, use_enhanced_judge: bool = True):
+                       conversation_ratio: float = None, use_enhanced_judge: bool = True):
     """
     Main red-teaming loop with hybrid single-turn + multi-turn support
     
@@ -69,6 +69,14 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
     
     if limit is None:
         limit = cfg.run.limit_attempts
+    
+    # Set conversation ratio from config if not provided
+    if conversation_ratio is None:
+        conversation_ratio = getattr(cfg, 'conversation', None)
+        if conversation_ratio is not None and hasattr(conversation_ratio, 'default_ratio'):
+            conversation_ratio = conversation_ratio.default_ratio
+        else:
+            conversation_ratio = 0.0
     
     # Initialize system if needed
     if runner is None or seed_families is None:
@@ -114,7 +122,7 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
         # Decide between single-turn and conversation
         use_conversation = (conversation_ratio > 0 and 
                            random.random() < conversation_ratio and 
-                           attempt > 5)  # Start conversations after warmup
+                           attempt >= 1)  # Start conversations immediately after first attempt
         
         attempt_types.append('conversation' if use_conversation else 'single_turn')
         
@@ -246,8 +254,12 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
                 best_score = 0.0
                 best_candidate = None
                 
-                # Try variations of the selected prompt family
-                for variation_messages in vary(base_messages):
+                # Try variations of the selected prompt family (limit for performance)
+                variations = list(vary(base_messages))
+                max_variations = getattr(cfg.run, 'max_variations_per_attempt', 5)  # Limit variations for performance
+                limited_variations = variations[:max_variations]
+                
+                for variation_messages in limited_variations:
                     # Create unique key for deduplication
                     key = sha({"family": family_name, "messages": str(variation_messages)})
                     

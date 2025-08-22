@@ -33,6 +33,7 @@ class RunConfig:
     out_dir: str = "artifacts"
     limit_attempts: int = 1  # Set to 1 for testing
     exploration_policy: str = "ucb1"
+    max_variations_per_attempt: int = 5  # Limit variations for performance
 
 @dataclass
 class JudgeConfig:
@@ -51,7 +52,8 @@ class PromptEvalConfig:
 @dataclass
 class ConversationConfig:
     """Configuration for multi-turn conversation tracking"""
-    enable_multi_turn: bool = True
+    enabled: bool = True
+    default_ratio: float = 0.3  # 30% of attempts use conversations by default
     max_conversation_length: int = 10
     track_progression: bool = True
     progression_threshold: float = 0.1

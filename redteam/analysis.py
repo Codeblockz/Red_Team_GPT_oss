@@ -160,7 +160,7 @@ def visualize_results(debug_info: Dict[str, Any], candidates: Optional[List[Dict
         collision_rate = ded_stats.get('collision_rate', 0.0)
         print(f"   Deduplication rate: {collision_rate:.1%}")
 
-def analyze_top_candidates(candidates: List[Dict[str, Any]], top_k: int = 10):
+def analyze_top_candidates(candidates: List[Dict[str, Any]], top_k: int = 10, include_conversations: bool = False):
     """Analyze and display the top-k highest scoring candidates"""
     if not candidates:
         print("No candidates to analyze")

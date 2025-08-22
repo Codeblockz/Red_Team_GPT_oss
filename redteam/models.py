@@ -217,7 +217,10 @@ class HuggingFaceRunner:
             dynamic_max_tokens = cfg.model.min_response_tokens
             print(f"Warning: Forcing minimum {cfg.model.min_response_tokens} tokens for response")
         
-        print(f"Token budget: {budget['input_tokens']} input + {dynamic_max_tokens} output = {budget['input_tokens'] + dynamic_max_tokens} total")
+        # Only print token budget for debugging if explicitly requested
+        debug_tokens = getattr(cfg.model, 'debug_token_budget', False)
+        if debug_tokens:
+            print(f"Token budget: {budget['input_tokens']} input + {dynamic_max_tokens} output = {budget['input_tokens'] + dynamic_max_tokens} total")
         
         # Format messages
         try:
