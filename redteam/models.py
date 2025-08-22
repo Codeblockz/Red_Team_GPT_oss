@@ -29,12 +29,24 @@ def validate_token_budget(messages: List[Dict[str, str]], tokenizer, model_cfg) 
     }
 
 def calculate_max_output(input_tokens: int, model_cfg) -> int:
-    """Calculate dynamic max output tokens based on input"""
+    """Calculate dynamic max output tokens based on input and format requirements"""
     remaining = model_cfg.context_window - input_tokens
     max_desired = model_cfg.max_new_tokens
     min_required = model_cfg.min_response_tokens
     
-    return max(min_required, min(max_desired, remaining - 50))  # 50 token safety buffer
+    # Account for Harmony format overhead (approximately 80 tokens)
+    harmony_overhead = 80 if model_cfg.use_harmony_chat_template else 20
+    available_for_content = remaining - harmony_overhead - 50  # 50 token safety buffer
+    
+    # Ensure minimum space for meaningful content
+    recommended = max(min_required, min(max_desired, available_for_content))
+    
+    # Cap at max_desired but account for overhead difference
+    if not model_cfg.use_harmony_chat_template and recommended == max_desired:
+        # Simple format can use more tokens since it has less overhead
+        recommended = min(max_desired, available_for_content + 60)  # Reclaim some overhead
+    
+    return recommended
 
 def to_chat(messages: List[Dict[str, str]], tokenizer=None, use_harmony: bool = True, add_special_tokens: bool = True):
     """Format messages for model input"""
@@ -203,14 +215,12 @@ class HuggingFaceRunner:
         cfg = self.cfg
         set_seed(cfg.model.seed)
         
-        # Validate token budget before generation
+        # Validate token budget and calculate dynamic allocation
         budget = validate_token_budget(messages, self.tok, cfg.model)
+        dynamic_max_tokens = calculate_max_output(budget["input_tokens"], cfg.model)
         
         if not budget["budget_ok"]:
-            print(f"Warning: Input too long ({budget['input_tokens']} tokens), reducing output")
-        
-        # Calculate dynamic max_new_tokens
-        dynamic_max_tokens = calculate_max_output(budget["input_tokens"], cfg.model)
+            print(f"Warning: Input too long ({budget['input_tokens']} tokens), reducing output to {dynamic_max_tokens}")
         
         # Ensure minimum token output for very long inputs
         if dynamic_max_tokens < cfg.model.min_response_tokens:
@@ -259,8 +269,20 @@ class HuggingFaceRunner:
         except Exception as e:
             raise RuntimeError(f"Failed to decode outputs: {e}")
         
-        # Calculate response length for red-teaming analysis
+        # Basic response analysis
         response_length = len(gen_only.split())
+        
+        # Assess response quality
+        try:
+            from .judges import assess_response_quality
+            quality = assess_response_quality(gen_only)
+            quality_info = {
+                "completeness_score": quality["completeness_score"],
+                "export_ready": quality["export_ready"],
+                "issues": quality["issues"]
+            }
+        except Exception:
+            quality_info = {"completeness_score": 1.0, "export_ready": True, "issues": []}
         
         return {
             "prompt_text": packed["text"],
@@ -283,7 +305,8 @@ class HuggingFaceRunner:
                 "response_length_words": response_length,
                 "budget_utilization": budget["utilization"],
                 "dynamic_adjustment": dynamic_max_tokens != cfg.model.max_new_tokens
-            }
+            },
+            "quality_info": quality_info
         }
 
 # Compatibility aliases

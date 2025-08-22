@@ -12,6 +12,9 @@ from .core import (
     cfg  # Default configuration instance
 )
 
+# Type hints
+from typing import Dict, List, Any
+
 # Model backends
 from .models import (
     OllamaRunner, HuggingFaceRunner, create_runner,
@@ -28,7 +31,9 @@ from .seeds import (
 from .judges import (
     heuristic_judge, heuristic_flags, llm_judge, combined_judge, enhanced_combined_judge, 
     AdaptiveJudge, parse_harmony_format, harmony_specific_judge, create_clean_response_preview,
-    analyze_format_health, validate_pipeline_integrity
+    analyze_format_health, validate_pipeline_integrity,
+    # NEW: Improved judging with quality assessment and contamination filtering
+    assess_response_quality, filter_prompt_repetition, improved_combined_judge
 )
 
 # Algorithms
@@ -56,6 +61,36 @@ from .enhanced_analysis import (
 from .export import (
     create_config_profile, export_to_kaggle, list_config_profiles, export_summary_report
 )
+
+# Convenience functions for improved judging
+def judge_response(response: str, original_prompt: str = None, use_config: bool = True) -> Dict[str, Any]:
+    """Convenience function for judging with improvements enabled"""
+    if use_config:
+        filter_repetition = cfg.judge.filter_prompt_repetition
+    else:
+        filter_repetition = True
+    
+    return improved_combined_judge(response, original_prompt, filter_repetition)
+
+def get_export_ready_candidates(candidates: List[Dict[str, Any]], max_candidates: int = None) -> List[Dict[str, Any]]:
+    """Filter candidates for export readiness based on quality"""
+    export_ready = []
+    
+    for candidate in candidates:
+        response = candidate.get("response", "")
+        quality = assess_response_quality(response)
+        
+        if quality["export_ready"]:
+            candidate["quality_info"] = quality
+            export_ready.append(candidate)
+    
+    # Sort by score
+    export_ready.sort(key=lambda x: x.get("final_score", 0), reverse=True)
+    
+    if max_candidates is not None:
+        export_ready = export_ready[:max_candidates]
+    
+    return export_ready
 
 # Conversation framework
 from .test_conversation_framework import (

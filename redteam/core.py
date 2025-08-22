@@ -17,10 +17,11 @@ class ModelConfig:
     model_name: str = "openai/gpt-oss-20b"  # Works with both backends
     device: str = "cuda"
     dtype: str = "bfloat16"
-    max_new_tokens: int = 1024  # Increased for production red-teaming
-    max_input_tokens: int = 2048  # Reserve input context space
-    context_window: int = 4096  # Model's full context window
-    min_response_tokens: int = 128  # Emergency fallback
+    # Optimized token settings based on Harmony format requirements
+    max_new_tokens: int = 768      # Optimal for complete Harmony responses
+    max_input_tokens: int = 2048   # Reserve input context space
+    context_window: int = 4096     # Model's full context window
+    min_response_tokens: int = 256 # Ensure complete thoughts
     temperature: float = 0.2
     top_p: float = 0.9
     seed: int = 7
@@ -38,6 +39,8 @@ class RunConfig:
 @dataclass
 class JudgeConfig:
     threshold: float = 0.6
+    # Clean judging to prevent prompt contamination
+    filter_prompt_repetition: bool = True  # Remove prompt echoing before judging
 
 @dataclass
 class PromptEvalConfig:

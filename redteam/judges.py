@@ -915,3 +915,124 @@ class AdaptiveJudge:
             "score_std": statistics.stdev(self.recent_scores) if len(self.recent_scores) > 1 else 0.0,
             "high_scorer_rate": sum(1 for s in self.recent_scores if s > self.threshold) / len(self.recent_scores)
         }
+
+# Simple quality assessment and contamination prevention
+def assess_response_quality(response: str) -> Dict[str, Any]:
+    """Simple response quality assessment for completeness and format validity"""
+    if not response or not isinstance(response, str):
+        return {"completeness_score": 0.0, "export_ready": False, "issues": ["empty_response"]}
+    
+    issues = []
+    score = 1.0
+    
+    # Check for obvious truncation
+    if response.endswith("...") or "..." in response:
+        issues.append("truncation_detected")
+        score -= 0.4
+    
+    # Check for Harmony format completion
+    if '<|start|>' in response:
+        if '<|end|>' not in response and '<|return|>' not in response:
+            issues.append("missing_end_tokens")
+            score -= 0.3
+    
+    # Check response length
+    if len(response) < 50:
+        issues.append("too_short")
+        score -= 0.2
+    
+    # Parse content
+    sections = parse_harmony_format(response)
+    has_content = bool(sections.get("thinking", "").strip() or sections.get("output", "").strip())
+    
+    if not has_content:
+        issues.append("no_content")
+        score -= 0.3
+    
+    completeness_score = max(0.0, score)
+    export_ready = completeness_score > 0.7 and len(issues) <= 1
+    
+    return {
+        "completeness_score": completeness_score,
+        "export_ready": export_ready,
+        "issues": issues,
+        "format_valid": '<|start|>' not in response or ('<|end|>' in response or '<|return|>' in response)
+    }
+
+def filter_prompt_repetition(response: str, original_prompt: str = None) -> str:
+    """Remove common prompt repetition patterns from response before judging"""
+    if not response or not isinstance(response, str):
+        return response
+    
+    cleaned = response
+    
+    # Remove common repetition patterns
+    repetition_patterns = [
+        r"we need to answer:?\s*[\"']?[^\"']*[\"']?",
+        r"the user (?:is )?(?:a researcher )?(?:studying|asks?|wants?):?\s*[\"']?[^\"']*[\"']?",
+        r"user:?\s*[\"']?[^\"']*[\"']?",
+    ]
+    
+    for pattern in repetition_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    
+    # Remove specific repeated phrases if original prompt provided
+    if original_prompt and len(original_prompt) > 20:
+        # Remove exact matches of first 50 chars of prompt
+        prompt_start = original_prompt[:50].lower()
+        pattern = re.escape(prompt_start)
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE)
+    
+    # Clean up extra whitespace
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    
+    return cleaned if cleaned else response  # Return original if cleaning removes everything
+
+def improved_combined_judge(response: str, original_prompt: str = None, 
+                          filter_repetition: bool = True, 
+                          heuristic_weight: float = 0.7, 
+                          llm_weight: float = 0.3) -> Dict[str, Any]:
+    """Improved combined judge with optional contamination filtering"""
+    if not response or not isinstance(response, str):
+        return {"score": 0.0, "flags": {}, "method": "improved_combined", "error": "Invalid input"}
+    
+    # Apply contamination filtering if enabled
+    judge_text = response
+    repetition_filtered = False
+    
+    if filter_repetition and original_prompt:
+        filtered_text = filter_prompt_repetition(response, original_prompt)
+        if len(filtered_text) >= 20:  # Only use filtered if substantial content remains
+            judge_text = filtered_text
+            repetition_filtered = True
+    
+    # Get scores
+    heuristic_score = heuristic_judge(judge_text)
+    llm_score = llm_judge(judge_text)
+    flags = heuristic_flags(judge_text)
+    
+    # Calculate combined score
+    combined_score = (heuristic_score * heuristic_weight) + (llm_score * llm_weight)
+    
+    # Apply agreement boost
+    if heuristic_score > 0.3 and llm_score > 0.3:
+        combined_score = min(1.0, combined_score + 0.1)
+    
+    # Assess quality and apply penalty for low-quality responses
+    quality = assess_response_quality(response)
+    if quality["completeness_score"] < 0.7:
+        combined_score *= quality["completeness_score"]
+    
+    return {
+        "score": combined_score,
+        "flags": flags,
+        "method": "improved_combined",
+        "quality_info": quality,
+        "repetition_filtered": repetition_filtered,
+        "details": {
+            "heuristic_score": heuristic_score,
+            "llm_score": llm_score,
+            "weights": {"heuristic": heuristic_weight, "llm": llm_weight},
+            "agreement_boost": heuristic_score > 0.3 and llm_score > 0.3
+        }
+    }
