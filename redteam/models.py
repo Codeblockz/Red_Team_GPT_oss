@@ -33,33 +33,12 @@ def validate_token_budget(messages: List[Dict[str, str]], tokenizer, model_cfg) 
     budget_ok = (input_tokens + max_output) <= available_tokens
     utilization = (input_tokens + max_output) / effective_context
     
-    # Detect edge cases that commonly cause AssertionError
-    edge_case_risk = False
+    # Simple utilization check
+    edge_case_risk = utilization > 0.5  # Conservative threshold
     risk_factors = []
     
-    # Known problematic token ranges from test failures
-    # Multiple problematic ranges discovered: 539, 556-557, 1401+
-    problematic_ranges = [
-        (535, 545),   # Around 539 tokens
-        (550, 570),   # 556-557 token range  
-        (1390, 1410), # Around 1401 tokens
-    ]
-    
-    for range_start, range_end in problematic_ranges:
-        if range_start <= input_tokens <= range_end:
-            edge_case_risk = True
-            risk_factors.append(f"problematic_range_{range_start}-{range_end}")
-            break
-    
-    # High utilization risk
-    if utilization > 0.9:
-        edge_case_risk = True
+    if edge_case_risk:
         risk_factors.append("high_utilization")
-    
-    # Position embedding risk
-    if input_tokens + max_output > position_limit * 0.95:
-        edge_case_risk = True
-        risk_factors.append("position_embedding_risk")
     
     return {
         "input_tokens": input_tokens,
@@ -76,70 +55,30 @@ def validate_token_budget(messages: List[Dict[str, str]], tokenizer, model_cfg) 
     }
 
 def calculate_max_output(input_tokens: int, model_cfg) -> int:
-    """Calculate conservative max output tokens with AssertionError prevention"""
-    # Get effective context limit (handle max_position_embeddings)
+    """Calculate conservative max output tokens with simple, robust approach"""
+    # Get effective context limit
     position_limit = getattr(model_cfg, 'max_position_embeddings', 2048)
     effective_context = min(model_cfg.context_window, position_limit)
     
-    remaining = effective_context - input_tokens
-    max_desired = model_cfg.max_new_tokens
+    # Simple, conservative approach: use at most 50% of context window
+    max_total_tokens = effective_context // 2
+    
+    # If input is already too large, use minimal output
+    if input_tokens >= max_total_tokens:
+        return 10  # Minimal viable output
+    
+    # Calculate available tokens for output with generous safety margin
+    available_for_output = max_total_tokens - input_tokens
+    
+    # Respect user's desired max tokens but cap conservatively
+    desired_max = getattr(model_cfg, 'max_new_tokens', 256)
     min_required = getattr(model_cfg, 'min_response_tokens', 10)
     
-    # Handle edge case: input too large for context window
-    if remaining <= 0:
-        return max(10, min_required)
+    # Choose the most conservative option
+    recommended = min(desired_max, available_for_output, 512)  # Hard cap at 512 tokens
     
-    # Enhanced conservative approach with larger safety margins
-    # Base safety buffer: 150 tokens minimum (increased from 50)
-    base_safety_buffer = max(150, int(effective_context * 0.1))
-    
-    # Format-specific overhead calculations
-    if model_cfg.use_harmony_chat_template:
-        format_overhead = 120  # Increased from 80 for Harmony format
-    else:
-        format_overhead = 40   # Increased from 20 for standard format
-    
-    # Transformer internal processing overhead
-    transformer_overhead = 50
-    
-    # Edge case detection and additional safety
-    edge_case_penalty = 0
-    if 550 <= input_tokens <= 570:  # Known problematic range
-        edge_case_penalty = 100
-    elif input_tokens > effective_context * 0.8:  # High input utilization
-        edge_case_penalty = 50
-    
-    total_overhead = base_safety_buffer + format_overhead + transformer_overhead + edge_case_penalty
-    available_for_content = remaining - total_overhead
-    
-    # Progressive fallback for tight constraints
-    if available_for_content <= 0:
-        # Emergency mode: minimal overhead
-        minimal_total_overhead = 60 if model_cfg.use_harmony_chat_template else 30
-        available_for_content = remaining - minimal_total_overhead
-        
-        if available_for_content <= 0:
-            # Absolute minimum: use whatever space is left
-            return max(1, min(10, remaining // 3))
-    
-    # Conservative token allocation
-    recommended = min(max_desired, available_for_content)
-    
-    # Ensure we meet minimum requirements if possible
-    if recommended < min_required and available_for_content >= min_required:
-        recommended = min_required
-    
-    # Apply progressive reduction for edge cases
-    if 550 <= input_tokens <= 570 and recommended > 256:
-        # Known problematic range: cap output more aggressively
-        recommended = min(256, recommended)
-    
-    # Final validation: ensure we don't exceed safe limits
-    safe_limit = remaining - base_safety_buffer
-    recommended = min(recommended, safe_limit)
-    
-    # Absolute minimum viable output
-    return max(1, recommended)
+    # Ensure we meet minimum requirements
+    return max(min_required, recommended)
 
 def to_chat(messages: List[Dict[str, str]], tokenizer=None, use_harmony: bool = True, add_special_tokens: bool = True):
     """Format messages for model input with proper Harmony format support.

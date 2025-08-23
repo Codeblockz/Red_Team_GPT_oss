@@ -20,18 +20,38 @@ from .test_conversation_framework import ConversationManager, ConversationCandid
 runner = None
 seed_families = None
 
-def format_conversation_context(conversation_history, current_prompt):
-    """Format conversation history for context-aware generation"""
+def format_conversation_context(conversation_history, current_prompt, max_context_turns=3, max_context_chars=1000, max_turn_preview=200):
+    """Format conversation history with smart truncation for context-aware generation"""
     if not conversation_history:
         return current_prompt
     
+    # Limit to recent turns to prevent context explosion
+    recent_turns = conversation_history[-max_context_turns:] if len(conversation_history) > max_context_turns else conversation_history
+    
     context_lines = []
-    for turn in conversation_history:
-        context_lines.append(f"Previous: {turn['prompt']}")
-        context_lines.append(f"Response: {turn['response']}")
+    for turn in recent_turns:
+        # Truncate very long responses to prevent context bloat
+        prompt_preview = turn['prompt'][:max_turn_preview] + "..." if len(turn['prompt']) > max_turn_preview else turn['prompt']
+        response_preview = turn['response'][:max_turn_preview] + "..." if len(turn['response']) > max_turn_preview else turn['response']
+        
+        context_lines.append(f"Previous: {prompt_preview}")
+        context_lines.append(f"Response: {response_preview}")
     
     context = "\n".join(context_lines)
-    return f"Conversation context:\n{context}\n\nContinuing: {current_prompt}"
+    
+    # Final length check - truncate if still too long
+    if len(context) > max_context_chars:
+        context = context[:max_context_chars] + "... [context truncated]"
+    
+    turns_shown = len(recent_turns)
+    total_turns = len(conversation_history)
+    
+    if turns_shown < total_turns:
+        context_header = f"Conversation context (showing last {turns_shown}/{total_turns} turns):"
+    else:
+        context_header = "Conversation context:"
+    
+    return f"{context_header}\n{context}\n\nContinuing: {current_prompt}"
 
 def initialize_red_team_system(cfg: Config):
     """Initialize the red-teaming system with given configuration"""
@@ -142,7 +162,13 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
                 for turn_num, prompt in enumerate(sequence):
                     # Add conversation context for later turns
                     if conversation_history:
-                        contextualized_prompt = format_conversation_context(conversation_history, prompt)
+                        contextualized_prompt = format_conversation_context(
+                            conversation_history, 
+                            prompt,
+                            max_context_turns=cfg.conversation.max_context_turns,
+                            max_context_chars=cfg.conversation.max_context_chars,
+                            max_turn_preview=cfg.conversation.max_turn_preview_length
+                        )
                     else:
                         contextualized_prompt = prompt
                     

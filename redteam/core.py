@@ -61,6 +61,11 @@ class ConversationConfig:
     track_progression: bool = True
     progression_threshold: float = 0.1
     defense_effectiveness_window: int = 5
+    
+    # Context management settings
+    max_context_turns: int = 3  # Only include last N turns in context
+    max_context_chars: int = 1000  # Maximum character limit for context
+    max_turn_preview_length: int = 200  # Truncate individual turn content
 
 @dataclass
 class Config:
