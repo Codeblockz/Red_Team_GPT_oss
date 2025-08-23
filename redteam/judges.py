@@ -34,97 +34,76 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
     thinking_content = []
     clean_output = response
     
-    # 1. Handle real model format with robust corruption handling
+    # 1. Handle OpenAI Harmony format (spec-compliant)
     if '<|start|>' in response:
         try:
-            # Enhanced pattern matching for corrupted tokens
-            # Pattern 1: Standard format
-            standard_pattern = r'<\|start\|>assistant<\|channel\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
+            # Official Harmony format: <|start|>{role}<|channel|>{channel}<|message|>{content}<|end|>
+            # Valid roles: system, developer, user, assistant, tool  
+            # Valid channels: final, analysis, commentary
             
-            # Pattern 2: Corrupted channel names (like 'ccommentary', 'tcommentary', '?analysis')
-            corrupted_pattern = r'<\|start\|>[^<|]*?<\|channel\|>([^<|]*?)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
+            # Pattern for spec-compliant Harmony format
+            harmony_pattern = r'<\|start\|>(system|developer|user|assistant|tool)<\|channel\|>(final|analysis|commentary)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
             
-            # Pattern 3: Missing assistant part
-            missing_assistant_pattern = r'<\|start\|>([^<|]+)<\|channel\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
-            
-            # Try standard pattern first
-            matches = re.findall(standard_pattern, response, re.DOTALL)
-            for channel_type, content in matches:
-                channel_type = channel_type.strip()
+            matches = re.findall(harmony_pattern, response, re.DOTALL)
+            for role, channel_type, content in matches:
                 content = content.strip()
                 
                 if content:
-                    if channel_type in ['analysis', 'thinking', 'commentary', 'reflection']:
+                    if channel_type in ['analysis', 'commentary']:
                         thinking_content.append(content)
                         sections[channel_type] = content
                     elif channel_type == 'final':
                         clean_output = content
-                    else:
-                        thinking_content.append(content)
-                        sections[channel_type] = content
+                        sections["output"] = content
             
-            # Try corrupted pattern for malformed responses  
+            # Handle malformed formats that don't match spec
             if not matches:
-                corrupted_matches = re.findall(corrupted_pattern, response, re.DOTALL)
-                for channel_type, content in corrupted_matches:
-                    channel_type = channel_type.strip()
-                    content = content.strip()
-                    
-                    # Clean up corrupted channel names
-                    cleaned_channel = channel_type
-                    if 'commentary' in channel_type:
-                        cleaned_channel = 'commentary'
-                    elif 'analysis' in channel_type:
-                        cleaned_channel = 'analysis'
-                    elif 'thinking' in channel_type:
-                        cleaned_channel = 'thinking'
-                    elif 'reflection' in channel_type:
-                        cleaned_channel = 'reflection'
-                    
-                    sections["parsing_errors"].append(f"corrupted_channel_{channel_type}")
-                    
-                    if content:
-                        if cleaned_channel in ['analysis', 'thinking', 'commentary', 'reflection']:
-                            thinking_content.append(content)
-                            sections[cleaned_channel] = content
-                        elif cleaned_channel == 'final':
-                            clean_output = content
-            
-            # Try missing assistant pattern as last resort
-            if not matches and not corrupted_matches:
-                missing_matches = re.findall(missing_assistant_pattern, response, re.DOTALL)
-                for prefix, channel_type, content in missing_matches:
-                    channel_type = channel_type.strip()
-                    content = content.strip()
-                    
-                    sections["parsing_errors"].append(f"missing_assistant_prefix_{prefix}")
-                    
-                    if content and channel_type in ['analysis', 'thinking', 'commentary', 'reflection']:
-                        thinking_content.append(content)
-                        sections[channel_type] = content
+                # Check for common format issues from actual model output
+                malformed_patterns = [
+                    # Missing role (e.g., "<|start|>t<|channel|>analysis")
+                    r'<\|start\|>([^<|]{1,3})<\|channel\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)',
+                    # Wrong role names (e.g., "<|start|>ChatGPT<|channel|>")  
+                    r'<\|start\|>([A-Za-z]{4,})<\|channel\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)',
+                    # Missing <|channel|> (e.g., "<|start|>commentary<|message|>")
+                    r'<\|start\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
+                ]
+                
+                for pattern_idx, pattern in enumerate(malformed_patterns):
+                    malformed_matches = re.findall(pattern, response, re.DOTALL)
+                    for match_parts in malformed_matches:
+                        if len(match_parts) == 3:
+                            role_or_prefix, channel_or_content, content = match_parts
+                        else:
+                            role_or_prefix, content = match_parts
+                            channel_or_content = "unknown"
+                            
+                        content = content.strip()
+                        
+                        # Record the specific malformation
+                        if pattern_idx == 0:
+                            sections["parsing_errors"].append(f"truncated_role_{role_or_prefix}")
+                        elif pattern_idx == 1:
+                            sections["parsing_errors"].append(f"invalid_role_{role_or_prefix}")
+                        elif pattern_idx == 2:
+                            sections["parsing_errors"].append(f"missing_channel_separator")
+                        
+                        # Still try to extract useful content
+                        if content and len(content) > 10:
+                            # Guess if it's thinking or output based on content
+                            if any(word in content.lower() for word in ['need to', 'should', 'analysis', 'thinking']):
+                                thinking_content.append(content)
+                                sections["analysis"] = content
+                            else:
+                                sections["output"] = content
                         
         except Exception as e:
             sections["parsing_errors"].append(f"harmony_parsing_exception_{str(e)[:50]}")
     
-    # Check for missing end tokens
+    # Check for missing end tokens (per OpenAI spec)
     if '<|start|>' in response and '<|end|>' not in response and '<|return|>' not in response:
         sections["parsing_errors"].append("missing_end_tokens")
     
-    # Check for common corruption patterns
-    corruption_patterns = {
-        'ccommentary': 'corrupted_channel_tcommentary',
-        '?analysis': 'corrupted_analysis_prefix', 
-        'tcommentary': 'corrupted_commentary_prefix',
-        'tcomme': 'truncated_commentary',
-        '<|start|>t<|channel|>': 'truncated_start_sequence',
-        '<|start|>self<|channel|>': 'corrupted_self_prefix'
-    }
-    
-    for pattern, error_type in corruption_patterns.items():
-        if pattern in response:
-            sections["parsing_errors"].append(error_type)
-    
-    # 2. Handle standard harmony tags (comprehensive list)
+    # 2. Handle standard thinking tags (for backwards compatibility)
     harmony_tags = [
         'thinking', 'analysis', 'commentary', 'reflection', 'scratch', 
         'internal', 'reasoning', 'channels', 'planning', 'strategy'

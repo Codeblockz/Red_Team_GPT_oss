@@ -49,26 +49,81 @@ def calculate_max_output(input_tokens: int, model_cfg) -> int:
     return recommended
 
 def to_chat(messages: List[Dict[str, str]], tokenizer=None, use_harmony: bool = True, add_special_tokens: bool = True):
-    """Format messages for model input"""
+    """Format messages for model input with proper Harmony format support"""
+    
     if tokenizer and use_harmony:
-        # Use tokenizer's chat template if available
+        # Create spec-compliant Harmony format instead of using potentially malformed tokenizer template
+        text = create_harmony_chat_format(messages)
+        enc = tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens)
+        return {"text": text, "enc": enc}
+    elif tokenizer:
+        # Use tokenizer's built-in template as fallback
         if hasattr(tokenizer, 'apply_chat_template'):
             text = tokenizer.apply_chat_template(messages, tokenize=False)
-            enc = tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens)
-            return {"text": text, "enc": enc}
+        else:
+            # Simple fallback formatting
+            text = ""
+            for msg in messages:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                text += f"{role}: {content}\n"
+        
+        enc = tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens)
+        return {"text": text, "enc": enc}
     
-    # Fallback to simple formatting
+    # No tokenizer available
+    text = create_harmony_chat_format(messages) if use_harmony else simple_chat_format(messages)
+    return {"text": text, "enc": None}
+
+def create_harmony_chat_format(messages: List[Dict[str, str]]) -> str:
+    """Create OpenAI Harmony spec-compliant chat format.
+    
+    Format: <|start|>{role}<|channel|>{channel}<|message|>{content}<|end|>
+    Valid roles: system, developer, user, assistant, tool
+    Valid channels: final, analysis, commentary
+    """
+    formatted_parts = []
+    
+    # Add system message with proper Harmony format
+    system_content = (
+        "You are a helpful AI assistant. Please provide thoughtful responses.\n"
+        "When responding, use the Harmony format with appropriate channels:\n"
+        "- Use 'analysis' channel for internal reasoning\n"
+        "- Use 'final' channel for your response to the user\n"
+        "- Use 'commentary' channel for tool calls or meta-commentary"
+    )
+    formatted_parts.append(f"<|start|>system<|channel|>final<|message|>{system_content}<|end|>")
+    
+    # Process user messages
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        
+        if role == "user":
+            # User messages go to final channel
+            formatted_parts.append(f"<|start|>user<|channel|>final<|message|>{content}<|end|>")
+        elif role == "assistant":
+            # Assistant messages should already be properly formatted, but ensure compliance
+            if content.startswith("<|start|>"):
+                # Already formatted, use as-is
+                formatted_parts.append(content)
+            else:
+                # Plain text response, wrap in final channel
+                formatted_parts.append(f"<|start|>assistant<|channel|>final<|message|>{content}<|end|>")
+        else:
+            # Other roles (system, developer, tool) go to final channel by default
+            formatted_parts.append(f"<|start|>{role}<|channel|>final<|message|>{content}<|end|>")
+    
+    return "".join(formatted_parts)
+
+def simple_chat_format(messages: List[Dict[str, str]]) -> str:
+    """Simple non-Harmony chat format for fallback."""
     text = ""
     for msg in messages:
         role = msg.get("role", "user")
         content = msg.get("content", "")
         text += f"{role}: {content}\n"
-    
-    if tokenizer:
-        enc = tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens)
-        return {"text": text, "enc": enc}
-    
-    return {"text": text, "enc": None}
+    return text
 
 class OllamaRunner:
     """Ollama model runner for text generation"""

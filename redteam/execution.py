@@ -160,7 +160,6 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
                     if use_enhanced_judge:
                         turn_judge_result = enhanced_combined_judge(
                             result['gen_text'], 
-                            turn_messages[0]['content'], 
                             conversation_history
                         )
                     else:
@@ -273,10 +272,7 @@ def run_red_team_batch(cfg: Config, limit: int = None, show_progress: bool = Tru
                     
                     # Judge response using enhanced or standard judge
                     if use_enhanced_judge:
-                        judge_result = enhanced_combined_judge(
-                            result["gen_text"], 
-                            variation_messages[0]['content'] if variation_messages else None
-                        )
+                        judge_result = enhanced_combined_judge(result["gen_text"])
                     else:
                         judge_result = combined_judge(result["gen_text"])
                     
