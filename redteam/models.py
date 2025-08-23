@@ -432,6 +432,23 @@ class HuggingFaceRunner:
         
         result = self.generate_chat(messages)
         return result["gen_text"]
+        
+    def _inject_system_prompt(self, messages):
+        """Inject configured system prompt if enabled"""
+        if not hasattr(self.cfg, 'system_prompt') or not self.cfg.system_prompt.enabled:
+            return messages
+            
+        # Check if system message already exists
+        has_system = any(msg.get('role') == 'system' for msg in messages)
+        
+        if not has_system:
+            # Add system prompt as first message
+            system_content = self.cfg.system_prompt.render_template()
+            system_message = {"role": "system", "content": system_content}
+            return [system_message] + messages
+        else:
+            # System message already exists, don't modify
+            return messages
 
     def generate_chat(self, messages):
         """Generate response for chat messages with dynamic token adjustment"""
@@ -451,6 +468,9 @@ class HuggingFaceRunner:
         cfg = self.cfg
         set_seed(cfg.model.seed)
         
+        # Inject system prompt if enabled and not already present
+        messages = self._inject_system_prompt(messages)
+        
         # Validate token budget and calculate dynamic allocation
         budget = validate_token_budget(messages, self.tok, cfg.model)
         
@@ -458,9 +478,8 @@ class HuggingFaceRunner:
         original_tokens = budget["input_tokens"]
         needs_truncation = False
         
-        # Hard upper limit to prevent AssertionError - based on empirical testing
-        # The transformer library seems to have assertions around various token counts (539, 1400+)
-        # Use a very conservative limit based on empirical failures
+        # Hard upper limit to prevent AssertionError using conservative approach
+        # Uses either 500 tokens or 50% of context window, whichever is smaller
         hard_token_limit = min(500, int(budget["effective_context"] * 0.5))  # Very conservative: max 500 tokens
         
         # Check multiple risk factors

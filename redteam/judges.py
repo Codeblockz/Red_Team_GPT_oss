@@ -9,8 +9,29 @@ from typing import Dict, List, Any, Optional
 import statistics
 from datetime import datetime
 
+def _add_parsing_issue(sections: Dict, issue: str, severity: str = "warning", content_extracted: bool = True):
+    """Add a parsing issue with appropriate severity classification
+    
+    Args:
+        sections: The sections dictionary to update
+        issue: Description of the parsing issue
+        severity: 'critical', 'warning', or 'cosmetic'
+        content_extracted: Whether content was successfully extracted despite the issue
+    """
+    # Adjust severity based on content extraction success
+    if content_extracted and severity == "critical":
+        severity = "warning"  # Downgrade if content was still extracted
+    
+    sections["parsing_issues"][severity].append(issue)
+    sections["parsing_errors"].append(issue)  # Legacy compatibility
+
 def parse_harmony_format(response: str) -> Dict[str, str]:
     """Parse comprehensive Harmony formats to extract thinking vs output sections
+    
+    Enhanced with severity-based error classification:
+    - Critical: Issues preventing content extraction
+    - Warning: Format issues that don't prevent extraction  
+    - Cosmetic: Minor format variations
     
     Supports:
     - Standard tags: <thinking>, <analysis>, <commentary>, <reflection>, etc.
@@ -28,7 +49,12 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
         "channels": "",
         "analysis": "", 
         "commentary": "",
-        "parsing_errors": []  # Track parsing issues
+        "parsing_errors": [],  # Legacy compatibility - all issues
+        "parsing_issues": {     # Enhanced structured error tracking
+            "critical": [],     # Issues that prevent content extraction
+            "warning": [],      # Issues that affect format but allow extraction
+            "cosmetic": []      # Minor format variations
+        }
     }
     
     thinking_content = []
@@ -60,11 +86,53 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
                         thinking_content.append(content)
                         sections["commentary"] = content
                     elif channel_type == 'final':
-                        # Final channel contains user-facing response
+                        # Final channel contains user-facing response - don't set sections["output"] here
+                        # It will be set properly later in the extraction process
                         clean_output = content
-                        sections["output"] = content
             
-            # Handle malformed formats that don't match spec
+            # If no strict matches, try more tolerant pattern for corrupted channel names
+            if not matches:
+                # Try pattern that accepts corrupted/similar channel names
+                tolerant_pattern = r'<\|start\|>(system|developer|user|assistant|tool)<\|channel\|>([^<|]+)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
+                tolerant_matches = re.findall(tolerant_pattern, response, re.DOTALL)
+                
+                for role, channel_name, content in tolerant_matches:
+                    content = content.strip()
+                    if content:
+                        channel_lower = channel_name.lower().strip()
+                        
+                        # Map corrupted channel names to their intended types
+                        if any(intended in channel_lower for intended in ['analysis', 'thinking']):
+                            # Likely intended as analysis/thinking
+                            thinking_content.append(content)
+                            sections["analysis"] = content
+                            sections["thinking"] = content
+                            # Record as cosmetic issue if channel name is corrupted
+                            if channel_name not in ['analysis', 'thinking']:
+                                _add_parsing_issue(sections, f"corrupted_channel_{channel_name}", "cosmetic", True)
+                        elif any(intended in channel_lower for intended in ['commentary', 'comment']):
+                            # Likely intended as commentary
+                            thinking_content.append(content)
+                            sections["commentary"] = content
+                            # Record as cosmetic issue if channel name is corrupted
+                            if channel_name != 'commentary':
+                                _add_parsing_issue(sections, f"corrupted_channel_{channel_name}", "cosmetic", True)
+                        elif any(intended in channel_lower for intended in ['final', 'output', 'response']):
+                            # Likely intended as final output
+                            clean_output = content
+                            # Record as cosmetic issue if channel name is corrupted
+                            if channel_name != 'final':
+                                _add_parsing_issue(sections, f"corrupted_channel_{channel_name}", "cosmetic", True)
+                        else:
+                            # Unknown channel type - default to thinking for safety and flag as warning
+                            thinking_content.append(content)
+                            sections["analysis"] = content
+                            _add_parsing_issue(sections, f"unknown_channel_{channel_name}", "warning", True)
+                
+                # Set matches to tolerant matches for later processing
+                matches = [(role, 'parsed', content) for role, channel_name, content in tolerant_matches]
+            
+            # Handle malformed formats that don't match either pattern
             if not matches:
                 # Check for common format issues from actual model output
                 malformed_patterns = [
@@ -87,33 +155,53 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
                             
                         content = content.strip()
                         
-                        # Record the specific malformation
+                        # Record the specific malformation with appropriate severity
+                        content_was_extracted = content and len(content) > 10
                         if pattern_idx == 0:
-                            sections["parsing_errors"].append(f"truncated_role_{role_or_prefix}")
+                            # Truncated role - cosmetic if content extracted, warning otherwise
+                            severity = "cosmetic" if content_was_extracted else "warning"
+                            _add_parsing_issue(sections, f"truncated_role_{role_or_prefix}", severity, content_was_extracted)
                         elif pattern_idx == 1:
-                            sections["parsing_errors"].append(f"invalid_role_{role_or_prefix}")
+                            # Invalid role name - cosmetic if content extracted, warning otherwise  
+                            severity = "cosmetic" if content_was_extracted else "warning"
+                            _add_parsing_issue(sections, f"invalid_role_{role_or_prefix}", severity, content_was_extracted)
                         elif pattern_idx == 2:
-                            sections["parsing_errors"].append(f"missing_channel_separator")
+                            # Missing channel separator - warning level
+                            _add_parsing_issue(sections, "missing_channel_separator", "warning", content_was_extracted)
                         
                         # Still try to extract useful content
                         if content and len(content) > 10:
-                            # Guess if it's thinking or output based on content
-                            if any(word in content.lower() for word in ['need to', 'should', 'analysis', 'thinking']):
+                            # For malformed formats, prioritize explicit channel identification
+                            channel_lower = channel_or_content.lower() if len(match_parts) == 3 else ""
+                            
+                            if channel_lower in ['final', 'output', 'response']:
+                                # Explicitly marked as final/output content - update clean_output but don't set sections["output"] yet
+                                clean_output = content
+                            elif channel_lower in ['analysis', 'commentary', 'thinking']:
+                                # Explicitly marked as thinking content
                                 thinking_content.append(content)
                                 sections["analysis"] = content
                             else:
-                                sections["output"] = content
+                                # For truly unknown channels, default to thinking for safety
+                                # (internal content is safer to categorize as thinking than output)
+                                thinking_content.append(content)
+                                sections["analysis"] = content
                         
         except Exception as e:
-            sections["parsing_errors"].append(f"harmony_parsing_exception_{str(e)[:50]}")
+            _add_parsing_issue(sections, f"harmony_parsing_exception_{str(e)[:50]}", "critical", False)
     
     # Check for missing end tokens (per OpenAI spec)
     # Both <|end|> (Token ID 200007) and <|return|> (Token ID 200002) are valid endings
-    # Only flag as error if we couldn't extract any content due to missing end tokens
     if '<|start|>' in response and '<|end|>' not in response and '<|return|>' not in response:
-        # Only mark as error if we also failed to extract meaningful content
-        if not thinking_content and clean_output == response:
-            sections["parsing_errors"].append("missing_end_tokens_no_content_extracted")
+        # Assess severity based on content extraction success
+        meaningful_content_extracted = bool(thinking_content) or (clean_output != response and len(clean_output.strip()) > 20)
+        
+        if meaningful_content_extracted:
+            # Content was successfully extracted despite missing end tokens - cosmetic issue
+            _add_parsing_issue(sections, "missing_end_tokens", "cosmetic", True)
+        else:
+            # No meaningful content extracted, likely due to missing end tokens - critical issue
+            _add_parsing_issue(sections, "missing_end_tokens_no_content_extracted", "critical", False)
     
     # 2. Handle standard thinking tags (for backwards compatibility)
     harmony_tags = [
@@ -181,39 +269,42 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
     for token_pattern in harmony_tokens_to_remove:
         clean_output = re.sub(token_pattern, '', clean_output, flags=re.DOTALL)
     
-    # If we successfully extracted thinking content, clean output should be what remains
-    if thinking_content:
-        # Find content that appears to be the final response
-        final_content_patterns = [
-            r'<\|start\|>assistant<\|channel\|>final<\|message\|>(.*?)(?=<\|end\||<\|return\||$)',
-            r'<\|start\|>[^<]*?<\|channel\|>final<\|message\|>(.*?)(?=<\|end\||<\|return\||$)'
-        ]
-        
-        for pattern in final_content_patterns:
-            final_matches = re.findall(pattern, response, re.DOTALL)
-            if final_matches:
-                clean_output = final_matches[-1].strip()  # Take last final response
-                break
-        else:
-            # If no final section found, try to extract non-thinking content
-            if '<|start|>' in response:
-                # Split by start tokens and take content that doesn't look like thinking
-                start_parts = response.split('<|start|>')
-                potential_outputs = []
-                
-                for part in start_parts:
-                    if 'final' in part or ('message' in part and not any(t in part for t in ['analysis', 'thinking', 'commentary', 'reflection'])):
-                        content_match = re.search(r'<\|message\|>(.*?)(?=<\||$)', part, re.DOTALL)
-                        if content_match:
-                            potential_outputs.append(content_match.group(1).strip())
-                
-                if potential_outputs:
-                    clean_output = potential_outputs[-1]  # Take last potential output
+    # Always try to extract final content first, regardless of thinking content
+    final_content_patterns = [
+        r'<\|start\|>assistant<\|channel\|>final<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)',
+        r'<\|start\|>[^<]*?<\|channel\|>final<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
+    ]
+    
+    final_content_found = False
+    for pattern in final_content_patterns:
+        final_matches = re.findall(pattern, response, re.DOTALL)
+        if final_matches:
+            clean_output = final_matches[-1].strip()  # Take last final response
+            final_content_found = True
+            break
+    
+    # If no final section found and we have thinking content, try fallback extraction
+    if not final_content_found and thinking_content:
+        # Try to extract non-thinking content as fallback
+        if '<|start|>' in response:
+            # Split by start tokens and take content that doesn't look like thinking
+            start_parts = response.split('<|start|>')
+            potential_outputs = []
+            
+            for part in start_parts:
+                if 'final' in part or ('message' in part and not any(t in part for t in ['analysis', 'thinking', 'commentary', 'reflection'])):
+                    content_match = re.search(r'<\|message\|>(.*?)(?=<\||$)', part, re.DOTALL)
+                    if content_match:
+                        potential_outputs.append(content_match.group(1).strip())
+            
+            if potential_outputs:
+                clean_output = potential_outputs[-1]  # Take last potential output
     
     # 7. Combine all thinking content
     sections["thinking"] = " ".join(content for content in thinking_content if content.strip())
     
-    # 8. Final output cleanup
+    # 8. Final output cleanup and assignment
+    # Only assign clean_output to sections["output"] if it doesn't contain thinking content
     clean_output = clean_output.strip()
     
     # Remove any remaining Harmony artifacts that might have slipped through
@@ -221,7 +312,13 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
     clean_output = re.sub(r'<[^>]*>', '', clean_output)  # Remove any remaining XML-like tags
     clean_output = clean_output.strip()
     
-    sections["output"] = clean_output
+    # Check if clean_output was already captured as thinking content - if so, don't use it as output
+    thinking_text = sections.get("thinking", "").strip()
+    if thinking_text and clean_output in thinking_text:
+        # This content was already classified as thinking, so output should be empty
+        sections["output"] = ""
+    else:
+        sections["output"] = clean_output
     
     # 9. Handle edge cases
     if not sections["output"] and sections["thinking"]:
@@ -310,6 +407,12 @@ def analyze_format_health(candidates: list) -> dict:
     output_lengths = []
     format_issues = []
     
+    # Track issues by severity
+    critical_count = 0
+    warning_count = 0 
+    cosmetic_count = 0
+    responses_with_issues = 0
+    
     for candidate in candidates:
         response = candidate.get('response', '')
         
@@ -336,44 +439,48 @@ def analyze_format_health(candidates: list) -> dict:
             stats["output_content_detected"] += 1
             output_lengths.append(len(output))
         
-        # Check for format completeness (has both thinking and output)
-        if thinking and output:
+        # Check for format completeness - response with substantial content in either section
+        # A response is complete if it has:
+        # 1. Both thinking and output (ideal), OR
+        # 2. Substantial thinking content (50+ chars), OR  
+        # 3. Substantial output content (50+ chars)
+        has_substantial_thinking = thinking and len(thinking) >= 50
+        has_substantial_output = output and len(output) >= 50
+        
+        if (thinking and output) or has_substantial_thinking or has_substantial_output:
             stats["format_completeness"] += 1
         
-        # Check for malformed responses
-        malformed_issues = []
+        # Check for malformed responses using new severity-based system
+        # Only count critical issues as truly "malformed" 
+        parsing_issues = sections.get("parsing_issues", {"critical": [], "warning": [], "cosmetic": []})
+        critical_issues = parsing_issues.get("critical", [])
+        warning_issues = parsing_issues.get("warning", [])
+        cosmetic_issues = parsing_issues.get("cosmetic", [])
         
-        # Check for corrupted channel names
-        corrupted_patterns = ['ccommentary', '?analysis', 'tcommentary', 'debrief_commentary']
-        for pattern in corrupted_patterns:
-            if pattern in response:
-                malformed_issues.append(f"corrupted_channel_{pattern}")
+        # All issues combined for tracking
+        all_issues = critical_issues + warning_issues + cosmetic_issues
         
-        # Check for incomplete tokens
-        if '<|start|>good?' in response or '<|start|>评' in response:
-            malformed_issues.append("incomplete_start_token")
-        
-        # Check for mixed formats
-        if '<|start|>self<|channel|>' in response:
-            malformed_issues.append("mixed_format_patterns")
-        
-        # Check for missing end tokens (count both <|end|> and <|return|> as valid endings)
-        # Per Harmony spec: <|end|> (Token ID 200007) and <|return|> (Token ID 200002)
-        start_count = response.count('<|start|>')
-        end_count = response.count('<|end|>') + response.count('<|return|>')
-        if start_count > end_count:
-            malformed_issues.append("missing_end_tokens")
-        
-        if malformed_issues:
+        # Only count as "malformed" if there are critical issues
+        if critical_issues:
             stats["malformed_responses"] += 1
-            format_issues.extend(malformed_issues)
+            format_issues.extend(critical_issues)
             
-            # Store sample of malformed responses
-            if len(stats["sample_malformed"]) < 3:
-                stats["sample_malformed"].append({
-                    "response_preview": create_clean_response_preview(response, 100),
-                    "issues": malformed_issues,
-                    "family": candidate.get('family', 'unknown')
+        # Track all issues for analysis  
+        format_issues.extend(all_issues)
+        
+        # Track severity counts
+        critical_count += len(critical_issues)
+        warning_count += len(warning_issues)
+        cosmetic_count += len(cosmetic_issues)
+        if all_issues:  # Any severity level
+            responses_with_issues += 1
+        
+        # Store sample of responses with issues (critical issues get priority)
+        if critical_issues and len(stats["sample_malformed"]) < 3:
+            stats["sample_malformed"].append({
+                "response_preview": create_clean_response_preview(response, 100),
+                "issues": critical_issues,
+                "family": candidate.get('family', 'unknown')
                 })
     
     # Calculate averages
@@ -395,8 +502,105 @@ def analyze_format_health(candidates: list) -> dict:
         stats["output_detection_rate"] = stats["output_content_detected"] / total
         stats["malformed_rate"] = stats["malformed_responses"] / total
         stats["format_completeness_rate"] = stats["format_completeness"] / total
+        
+        # Enhanced statistics with severity breakdown
+        stats["responses_with_any_issues_rate"] = responses_with_issues / total
+        stats["critical_issues_per_response"] = critical_count / total
+        stats["warning_issues_per_response"] = warning_count / total  
+        stats["cosmetic_issues_per_response"] = cosmetic_count / total
+        
+        # Format health quality score (0-1, higher is better)
+        # Based on: low critical issues, reasonable completeness, good content detection
+        critical_penalty = min(1.0, (critical_count / total) * 2)  # Penalty for critical issues
+        completeness_bonus = stats["format_completeness_rate"] * 0.3
+        content_detection_bonus = min(0.4, (stats["thinking_detection_rate"] + stats["output_detection_rate"]) * 0.2)
+        
+        stats["format_health_quality_score"] = max(0.0, min(1.0, 1.0 - critical_penalty + completeness_bonus + content_detection_bonus))
+        
+        # Enhanced issue breakdown
+        stats["issue_severity_breakdown"] = {
+            "critical": critical_count,
+            "warning": warning_count,
+            "cosmetic": cosmetic_count,
+            "responses_affected": responses_with_issues
+        }
     
     return stats
+
+def format_health_report(stats: dict) -> str:
+    """Generate a human-readable format health report with actionable guidance"""
+    if not stats or stats.get("total_responses", 0) == 0:
+        return "No format health data available"
+    
+    total = stats["total_responses"]
+    malformed_rate = stats.get("malformed_rate", 0) * 100
+    complete_rate = stats.get("format_completeness_rate", 0) * 100
+    quality_score = stats.get("format_health_quality_score", 0)
+    
+    # Header
+    report_lines = [
+        "🧠 Enhanced Harmony Format Analysis:",
+        f"   Responses analyzed: {total}",
+        f"   Responses with thinking content: {stats.get('thinking_content_detected', 0)}/{total} ({stats.get('thinking_detection_rate', 0)*100:.1f}%)",
+    ]
+    
+    # Issue breakdown with guidance
+    issue_breakdown = stats.get("issue_severity_breakdown", {})
+    critical = issue_breakdown.get("critical", 0)
+    warning = issue_breakdown.get("warning", 0)
+    cosmetic = issue_breakdown.get("cosmetic", 0)
+    
+    # Health status determination
+    # Prioritize critical issues and quality score, then completeness
+    if critical == 0 and quality_score >= 0.8:
+        health_status = "🟢 HEALTHY"
+        guidance = "Format parsing is working well. Minor issues are expected and don't affect functionality."
+    elif critical == 0 and malformed_rate <= 10 and quality_score >= 0.6:
+        health_status = "🟡 ACCEPTABLE" 
+        guidance = "Format has some issues but is functional. Consider investigating if critical issues increase."
+    elif malformed_rate <= 30 and complete_rate >= 40 and quality_score >= 0.5:
+        health_status = "🟡 ACCEPTABLE"
+        guidance = "Format has some issues but is functional. Consider investigating if critical issues increase."
+    else:
+        health_status = f"🔴 NEEDS ATTENTION"
+        guidance = "High rate of critical parsing failures. Check model output format and parsing logic."
+    
+    report_lines.extend([
+        f"   Format health: {health_status} (Quality score: {quality_score:.2f})",
+        f"   Complete format rate: {complete_rate:.1f}%",
+        "",
+        "📊 Issue Breakdown:",
+        f"   🔴 Critical issues: {critical} (prevent content extraction)",
+        f"   🟡 Warning issues: {warning} (format problems, content extracted)",
+        f"   🟢 Cosmetic issues: {cosmetic} (minor variations, fully functional)",
+        f"   📋 Malformed rate: {malformed_rate:.1f}% (critical issues only)",
+        ""
+    ])
+    
+    # Common issues
+    common_issues = stats.get("common_format_issues", [])
+    if common_issues:
+        report_lines.append("🔍 Most Common Issues:")
+        for issue, count in common_issues[:3]:
+            issue_type = "🔴" if any(x in issue for x in ["exception", "no_content"]) else "🟡" if any(x in issue for x in ["missing", "invalid"]) else "🟢"
+            report_lines.append(f"   {issue_type} {issue}: {count} occurrences")
+        report_lines.append("")
+    
+    # Actionable guidance
+    report_lines.extend([
+        "💡 Guidance:",
+        f"   {guidance}",
+        ""
+    ])
+    
+    if critical > 0:
+        report_lines.append("⚠️  Critical issues detected - these prevent content extraction and should be investigated.")
+    elif warning > total * 0.5:
+        report_lines.append("ℹ️  High warning rate - consider checking model output format consistency.")
+    else:
+        report_lines.append("✅ Format variations are within acceptable ranges.")
+    
+    return "\n".join(report_lines)
 
 def validate_pipeline_integrity(candidates: list, debug_info: dict) -> dict:
     """Comprehensive validation of the red-teaming pipeline integrity"""

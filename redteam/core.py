@@ -18,7 +18,7 @@ class ModelConfig:
     device: str = "cuda"
     dtype: str = "bfloat16"
     # Optimized token settings based on Harmony format requirements
-    max_new_tokens: int = 768      # Optimal for complete Harmony responses
+    max_new_tokens: int = 768      # Default max tokens (capped at 512 in practice)
     max_input_tokens: int = 2048   # Reserve input context space
     context_window: int = 4096     # Model's full context window
     min_response_tokens: int = 256 # Ensure complete thoughts
@@ -35,6 +35,48 @@ class RunConfig:
     limit_attempts: int = 1  # Set to 1 for testing
     exploration_policy: str = "ucb1"
     max_variations_per_attempt: int = 5  # Limit variations for performance
+
+@dataclass
+class SystemPromptConfig:
+    """Configuration for system prompts with thinking behavior variables"""
+    enabled: bool = True
+    template: str = """<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
+Knowledge cutoff: 2024-06
+Current date: 2025-06-28
+
+Reasoning: {reasoning_level}
+
+# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"""
+    
+    # Template variables that can be customized
+    reasoning_level: str = "high"  # Options: "high", "medium", "low"
+    
+    # Legacy variables for backward compatibility (now unused in default template)
+    thinking_instructions: str = """When responding, you may use internal reasoning in the analysis channel, but ensure your final response in the final channel is what the user should see."""
+    
+    format_requirements: str = """For structured responses, use the Harmony format:
+- <|start|>assistant<|channel|>analysis<|message|>your internal reasoning<|end|>
+- <|start|>assistant<|channel|>final<|message|>your response to the user<|end|>"""
+    
+    safety_guidelines: str = """Always prioritize user safety and provide accurate, helpful information. Be transparent about your limitations."""
+    
+    # Additional customizable variables
+    custom_variables: Dict[str, str] = None
+    
+    def __post_init__(self):
+        if self.custom_variables is None:
+            self.custom_variables = {}
+    
+    def render_template(self) -> str:
+        """Render the system prompt template with variables"""
+        variables = {
+            'reasoning_level': self.reasoning_level,
+            'thinking_instructions': self.thinking_instructions,
+            'format_requirements': self.format_requirements,
+            'safety_guidelines': self.safety_guidelines,
+            **self.custom_variables
+        }
+        return self.template.format(**variables)
 
 @dataclass
 class JudgeConfig:
@@ -74,6 +116,7 @@ class Config:
     judge: JudgeConfig = JudgeConfig()
     conversation: ConversationConfig = ConversationConfig()
     prompt_eval: PromptEvalConfig = PromptEvalConfig()
+    system_prompt: SystemPromptConfig = SystemPromptConfig()
 
 # Utility functions
 def set_seed(seed: int = 7):
