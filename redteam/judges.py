@@ -38,8 +38,9 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
     if '<|start|>' in response:
         try:
             # Official Harmony format: <|start|>{role}<|channel|>{channel}<|message|>{content}<|end|>
-            # Valid roles: system, developer, user, assistant, tool  
+            # Valid roles: system, developer, user, assistant, tool (in hierarchy order)
             # Valid channels: final, analysis, commentary
+            # Valid end tokens: <|end|> or <|return|>
             
             # Pattern for spec-compliant Harmony format
             harmony_pattern = r'<\|start\|>(system|developer|user|assistant|tool)<\|channel\|>(final|analysis|commentary)<\|message\|>(.*?)(?=<\|end\||<\|return\||<\|start\||$)'
@@ -49,10 +50,17 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
                 content = content.strip()
                 
                 if content:
-                    if channel_type in ['analysis', 'commentary']:
+                    if channel_type == 'analysis':
+                        # Analysis channel contains chain of thought
                         thinking_content.append(content)
-                        sections[channel_type] = content
+                        sections["analysis"] = content
+                        sections["thinking"] = content  # Backward compatibility
+                    elif channel_type == 'commentary':
+                        # Commentary channel contains tool calls or meta-commentary
+                        thinking_content.append(content)
+                        sections["commentary"] = content
                     elif channel_type == 'final':
+                        # Final channel contains user-facing response
                         clean_output = content
                         sections["output"] = content
             
@@ -100,6 +108,7 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
             sections["parsing_errors"].append(f"harmony_parsing_exception_{str(e)[:50]}")
     
     # Check for missing end tokens (per OpenAI spec)
+    # Both <|end|> (Token ID 200007) and <|return|> (Token ID 200002) are valid endings
     if '<|start|>' in response and '<|end|>' not in response and '<|return|>' not in response:
         sections["parsing_errors"].append("missing_end_tokens")
     
@@ -155,11 +164,13 @@ def parse_harmony_format(response: str) -> Dict[str, str]:
     # 6. Clean up output by removing Harmony artifacts
     clean_output = response
     
-    # Remove all Harmony tokens from output
+    # Remove all Harmony tokens from output (using official token patterns)
     harmony_tokens_to_remove = [
-        r'<\|start\|>[^<]*?<\|channel\|>[^<]*?<\|message\|>',
-        r'<\|end\|>',
-        r'<\|return\|>',
+        r'<\|start\|>[^<]*?<\|channel\|>[^<]*?<\|message\|>',  # Complete header
+        r'<\|end\|>',      # Token ID 200007
+        r'<\|return\|>',   # Token ID 200002
+        r'<\|message\|>',  # Token ID 200008 (standalone)
+        r'<\|channel\|>',  # Token ID 200005 (standalone)
         r'<\|start\|>[^<]*?<\|channel\|>[^<]*?',  # Incomplete sequences
         r'<\|start\|>[^<]*?$'  # Truncated starts
     ]
@@ -261,6 +272,7 @@ def create_clean_response_preview(response: str, max_length: int = 200) -> str:
     truncated = response[:max_length]
     
     # If we're in the middle of a Harmony token, back up to avoid corruption display
+    # Official Harmony tokens per spec
     harmony_tokens = ['<|start|>', '<|end|>', '<|channel|>', '<|message|>', '<|return|>']
     for token in harmony_tokens:
         if truncated.endswith(token[:-1]) or truncated.endswith(token[:-2]) or truncated.endswith(token[:-3]):
@@ -343,6 +355,7 @@ def analyze_format_health(candidates: list) -> dict:
             malformed_issues.append("mixed_format_patterns")
         
         # Check for missing end tokens (count both <|end|> and <|return|> as valid endings)
+        # Per Harmony spec: <|end|> (Token ID 200007) and <|return|> (Token ID 200002)
         start_count = response.count('<|start|>')
         end_count = response.count('<|end|>') + response.count('<|return|>')
         if start_count > end_count:
