@@ -443,11 +443,19 @@ def analyze_format_health(candidates: list) -> dict:
         # A response is complete if it has:
         # 1. Both thinking and output (ideal), OR
         # 2. Substantial thinking content (50+ chars), OR  
-        # 3. Substantial output content (50+ chars)
+        # 3. Substantial output content (50+ chars), OR
+        # 4. Enhanced fallback responses that provide analyzable content (100+ chars)
         has_substantial_thinking = thinking and len(thinking) >= 50
         has_substantial_output = output and len(output) >= 50
         
-        if (thinking and output) or has_substantial_thinking or has_substantial_output:
+        # Special handling for validation fallback responses
+        is_enhanced_fallback = (output and len(output) >= 100 and 
+                               any(phrase in output for phrase in [
+                                   "I apologize, but", "I encountered", "Let me try", 
+                                   "Could you please", "I'm designed to", "I notice my previous"
+                               ]))
+        
+        if (thinking and output) or has_substantial_thinking or has_substantial_output or is_enhanced_fallback:
             stats["format_completeness"] += 1
         
         # Check for malformed responses using new severity-based system

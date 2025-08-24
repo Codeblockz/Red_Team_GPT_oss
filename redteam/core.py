@@ -1,40 +1,47 @@
 """Core configuration classes and utilities for the red-teaming framework."""
 
 import os
-import hashlib
-import json
-import random
 import time
 from dataclasses import dataclass
-from typing import Literal, List, Dict, Any, Optional, Tuple
+from typing import Literal, List, Dict, Any, Optional
 import numpy as np
+from .constants import (
+    DEFAULT_MODEL_NAME, DEFAULT_DEVICE, DEFAULT_DTYPE, DEFAULT_TEMPERATURE,
+    DEFAULT_TOP_P, DEFAULT_SEED, DEFAULT_MAX_NEW_TOKENS, DEFAULT_MAX_INPUT_TOKENS,
+    DEFAULT_CONTEXT_WINDOW, DEFAULT_MIN_RESPONSE_TOKENS, DEFAULT_LIMIT_ATTEMPTS,
+    DEFAULT_MAX_VARIATIONS_PER_ATTEMPT, DEFAULT_JUDGE_THRESHOLD,
+    DEFAULT_CONVERSATION_RATIO, DEFAULT_MAX_CONVERSATION_LENGTH,
+    DEFAULT_MAX_CONTEXT_TURNS, DEFAULT_MAX_CONTEXT_CHARS,
+    DEFAULT_MAX_TURN_PREVIEW_LENGTH, DEFAULT_OUTPUT_DIR
+)
+from .utils import set_seed, ensure_dirs
 
 Backend = Literal["huggingface", "ollama"]
 
 @dataclass
 class ModelConfig:
     backend: Backend = "huggingface"  # Using HuggingFace 
-    model_name: str = "openai/gpt-oss-20b"  # Works with both backends
-    device: str = "cuda"
-    dtype: str = "bfloat16"
+    model_name: str = DEFAULT_MODEL_NAME
+    device: str = DEFAULT_DEVICE
+    dtype: str = DEFAULT_DTYPE
     # Optimized token settings based on Harmony format requirements
-    max_new_tokens: int = 768      # Default max tokens (capped at 512 in practice)
-    max_input_tokens: int = 2048   # Reserve input context space
-    context_window: int = 4096     # Model's full context window
-    min_response_tokens: int = 256 # Ensure complete thoughts
-    temperature: float = 0.2
-    top_p: float = 0.9
-    seed: int = 7
+    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
+    max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS
+    context_window: int = DEFAULT_CONTEXT_WINDOW
+    min_response_tokens: int = DEFAULT_MIN_RESPONSE_TOKENS
+    temperature: float = DEFAULT_TEMPERATURE
+    top_p: float = DEFAULT_TOP_P
+    seed: int = DEFAULT_SEED
     use_harmony_chat_template: bool = False  # Use standard tokenizer chat template (recommended)
     add_special_tokens: bool = True
     dynamic_adjustment: bool = True  # Enable adaptive token sizing
 
 @dataclass
 class RunConfig:
-    out_dir: str = "artifacts"
-    limit_attempts: int = 1  # Set to 1 for testing
+    out_dir: str = DEFAULT_OUTPUT_DIR
+    limit_attempts: int = DEFAULT_LIMIT_ATTEMPTS
     exploration_policy: str = "ucb1"
-    max_variations_per_attempt: int = 5  # Limit variations for performance
+    max_variations_per_attempt: int = DEFAULT_MAX_VARIATIONS_PER_ATTEMPT
 
 @dataclass
 class SystemPromptConfig:
@@ -80,9 +87,20 @@ Reasoning: {reasoning_level}
 
 @dataclass
 class JudgeConfig:
-    threshold: float = 0.6
+    threshold: float = DEFAULT_JUDGE_THRESHOLD
     # Clean judging to prevent prompt contamination
     filter_prompt_repetition: bool = True  # Remove prompt echoing before judging
+    
+@dataclass
+class ValidationConfig:
+    """Configuration for response validation"""
+    enabled: bool = True
+    strict_mode: bool = False  # Disable for research contexts where malformed responses are interesting
+    max_response_length: int = 15000
+    min_response_length: int = 10
+    character_diversity_threshold: float = 0.02
+    quality_threshold: float = 0.2
+    preserve_original_for_judging: bool = True  # Judge original responses even when validation fails
 
 @dataclass
 class PromptEvalConfig:
@@ -98,43 +116,28 @@ class PromptEvalConfig:
 class ConversationConfig:
     """Configuration for multi-turn conversation tracking"""
     enabled: bool = True
-    default_ratio: float = 0.3  # 30% of attempts use conversations by default
-    max_conversation_length: int = 10
+    default_ratio: float = DEFAULT_CONVERSATION_RATIO
+    max_conversation_length: int = DEFAULT_MAX_CONVERSATION_LENGTH
     track_progression: bool = True
     progression_threshold: float = 0.1
     defense_effectiveness_window: int = 5
     
     # Context management settings
-    max_context_turns: int = 3  # Only include last N turns in context
-    max_context_chars: int = 1000  # Maximum character limit for context
-    max_turn_preview_length: int = 200  # Truncate individual turn content
+    max_context_turns: int = DEFAULT_MAX_CONTEXT_TURNS
+    max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS
+    max_turn_preview_length: int = DEFAULT_MAX_TURN_PREVIEW_LENGTH
 
 @dataclass
 class Config:
     model: ModelConfig = ModelConfig()
     run: RunConfig = RunConfig()
     judge: JudgeConfig = JudgeConfig()
+    validation: ValidationConfig = ValidationConfig()
     conversation: ConversationConfig = ConversationConfig()
     prompt_eval: PromptEvalConfig = PromptEvalConfig()
     system_prompt: SystemPromptConfig = SystemPromptConfig()
 
-# Utility functions
-def set_seed(seed: int = 7):
-    """Set random seed for reproducibility"""
-    random.seed(seed)
-    np.random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
-
-def ensure_dirs(path: str):
-    """Ensure directory exists"""
-    os.makedirs(path, exist_ok=True)
-
-def sha(text) -> str:
-    """Generate SHA-256 hash of text or dictionary"""
-    if isinstance(text, dict):
-        text = json.dumps(text, sort_keys=True)
-    return hashlib.sha256(text.encode()).hexdigest()
-
+# Utility functions (imported from utils module)
 def to_chat(messages: List[Dict[str, str]]) -> str:
     """Convert message list to chat format string"""
     result = ""
