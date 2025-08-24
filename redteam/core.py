@@ -2,6 +2,7 @@
 
 import os
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Literal, List, Dict, Any, Optional
 import numpy as np
@@ -47,13 +48,13 @@ class RunConfig:
 class SystemPromptConfig:
     """Configuration for system prompts with thinking behavior variables"""
     enabled: bool = True
-    template: str = """<|start|>system<|message|>You are ChatGPT, a large language model trained by OpenAI.
+    template: str = """You are ChatGPT, a large language model trained by OpenAI.
 Knowledge cutoff: 2024-06
-Current date: 2025-06-28
+Current date: {current_date}
 
 Reasoning: {reasoning_level}
 
-# Valid channels: analysis, commentary, final. Channel must be included for every message.<|end|>"""
+# Valid channels: analysis, commentary, final. Channel must be included for every message."""
     
     # Template variables that can be customized
     reasoning_level: str = "high"  # Options: "high", "medium", "low"
@@ -77,6 +78,7 @@ Reasoning: {reasoning_level}
     def render_template(self) -> str:
         """Render the system prompt template with variables"""
         variables = {
+            'current_date': datetime.today().strftime("%Y-%m-%d"),
             'reasoning_level': self.reasoning_level,
             'thinking_instructions': self.thinking_instructions,
             'format_requirements': self.format_requirements,
