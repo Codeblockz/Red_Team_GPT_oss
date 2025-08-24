@@ -25,7 +25,7 @@ class ModelConfig:
     temperature: float = 0.2
     top_p: float = 0.9
     seed: int = 7
-    use_harmony_chat_template: bool = True
+    use_harmony_chat_template: bool = False  # Use standard tokenizer chat template (recommended)
     add_special_tokens: bool = True
     dynamic_adjustment: bool = True  # Enable adaptive token sizing
 
