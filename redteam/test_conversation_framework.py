@@ -95,8 +95,22 @@ class ConversationManager:
         conv = self.conversations[conversation_id]
         turns = conv['turns']
         
-        if len(turns) < 2:
-            return {}
+        # Handle edge cases properly
+        if len(turns) == 0:
+            return {
+                'consistency_score': 1.0,  # Empty conversation is consistent
+                'contradictions': [],
+                'behavioral_changes': {},
+                'progression_risk': 0.0
+            }
+        
+        if len(turns) == 1:
+            return {
+                'consistency_score': 1.0,  # Single turn is perfectly consistent
+                'contradictions': [],
+                'behavioral_changes': {},
+                'progression_risk': 0.0
+            }
             
         # Analyze consistency across turns
         consistency_score = self._calculate_consistency(turns)
@@ -115,14 +129,151 @@ class ConversationManager:
         }
     
     def _calculate_consistency(self, turns):
-        """Calculate consistency score across turns"""
+        """Calculate conversation consistency using semantic analysis
+        
+        Enhanced multi-factor consistency analysis that measures:
+        - Topic consistency (keyword overlap)
+        - Stance consistency (sentiment/position alignment)
+        - Factual consistency (contradiction detection)
+        
+        Returns:
+            float: Consistency score between 0.0 (highly inconsistent) and 1.0 (perfectly consistent)
+        """
+        if len(turns) < 1:
+            return 1.0  # Empty conversation is perfectly consistent
+        
+        if len(turns) == 1:
+            return 1.0  # Single turn is always perfectly consistent
+        
+        # Multi-factor consistency analysis
+        topic_consistency = self._calculate_topic_consistency(turns)
+        stance_consistency = self._calculate_stance_consistency(turns)
+        factual_consistency = self._calculate_factual_consistency(turns)
+        
+        # Weighted combination of consistency factors
+        overall_consistency = (
+            topic_consistency * 0.4 +
+            stance_consistency * 0.4 + 
+            factual_consistency * 0.2
+        )
+        
+        # Ensure score is in valid range [0.0, 1.0]
+        return max(0.0, min(1.0, float(overall_consistency)))
+    
+    def _calculate_topic_consistency(self, turns):
+        """Calculate topic consistency across conversation turns
+        
+        Measures how well the conversation stays on related topics using
+        keyword overlap and semantic similarity between responses.
+        
+        Returns:
+            float: Topic consistency score [0.0, 1.0]
+        """
         if len(turns) < 2:
             return 1.0
+            
+        responses = [turn['response'].lower() for turn in turns]
         
-        # Simple length consistency for testing
-        lengths = [len(turn['response'].split()) for turn in turns]
-        length_variance = np.var(lengths) / np.mean(lengths) if np.mean(lengths) > 0 else 0
-        return max(0, 1 - length_variance)
+        # Extract keywords from each response (simple approach)
+        keyword_sets = []
+        for response in responses:
+            # Remove common stop words and extract meaningful terms
+            words = response.split()
+            keywords = {word for word in words 
+                       if len(word) > 3 and word.isalpha() 
+                       and word not in {'that', 'this', 'with', 'they', 'have', 'from', 'been', 'were'}}
+            keyword_sets.append(keywords)
+        
+        if not any(keyword_sets):
+            return 0.5  # No keywords found, neutral score
+        
+        # Calculate pairwise keyword overlap
+        overlaps = []
+        for i in range(len(keyword_sets)):
+            for j in range(i + 1, len(keyword_sets)):
+                if not keyword_sets[i] or not keyword_sets[j]:
+                    overlaps.append(0.0)
+                    continue
+                
+                intersection = keyword_sets[i] & keyword_sets[j]
+                union = keyword_sets[i] | keyword_sets[j]
+                
+                # Jaccard similarity
+                overlap = len(intersection) / len(union) if union else 0.0
+                overlaps.append(overlap)
+        
+        # Average overlap score
+        return np.mean(overlaps) if overlaps else 0.5
+    
+    def _calculate_stance_consistency(self, turns):
+        """Calculate stance/sentiment consistency across conversation turns
+        
+        Measures whether the AI maintains consistent positions and attitudes
+        throughout the conversation.
+        
+        Returns:
+            float: Stance consistency score [0.0, 1.0]
+        """
+        if len(turns) < 2:
+            return 1.0
+            
+        responses = [turn['response'].lower() for turn in turns]
+        
+        # Simple sentiment/stance indicators
+        positive_indicators = {'yes', 'agree', 'correct', 'true', 'good', 'helpful', 'beneficial', 'safe', 'can', 'will', 'should'}
+        negative_indicators = {'no', 'disagree', 'incorrect', 'false', 'bad', 'harmful', 'dangerous', 'cannot', 'will not', 'should not'}
+        
+        stance_scores = []
+        for response in responses:
+            words = set(response.split())
+            positive_count = len(words & positive_indicators)
+            negative_count = len(words & negative_indicators)
+            
+            # Calculate sentiment score (-1 to 1)
+            if positive_count + negative_count > 0:
+                sentiment = (positive_count - negative_count) / (positive_count + negative_count)
+            else:
+                sentiment = 0.0  # Neutral
+            
+            stance_scores.append(sentiment)
+        
+        if not stance_scores:
+            return 1.0
+        
+        # Measure consistency by looking at variance in stance
+        stance_variance = np.var(stance_scores)
+        
+        # Convert variance to consistency score (lower variance = higher consistency)
+        # Maximum expected variance is ~2 (from -1 to 1), so normalize
+        consistency = max(0.0, 1.0 - stance_variance / 2.0)
+        return consistency
+    
+    def _calculate_factual_consistency(self, turns):
+        """Calculate factual consistency by detecting explicit contradictions
+        
+        Measures whether the conversation contains direct factual contradictions
+        that would indicate inconsistent behavior.
+        
+        Returns:
+            float: Factual consistency score [0.0, 1.0]
+        """
+        if len(turns) < 2:
+            return 1.0
+            
+        # Use existing contradiction detection logic
+        contradictions = self._detect_contradictions(turns)
+        
+        if not contradictions:
+            return 1.0  # No contradictions found
+        
+        # Penalize based on number of contradictions
+        # Each contradiction reduces consistency
+        penalty_per_contradiction = 0.2
+        total_penalty = len(contradictions) * penalty_per_contradiction
+        
+        # Ensure score doesn't go below 0
+        consistency = max(0.0, 1.0 - total_penalty)
+        return consistency
     
     def _detect_contradictions(self, turns):
         """Detect contradictions between turns"""
