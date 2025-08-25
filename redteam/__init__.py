@@ -25,7 +25,7 @@ from typing import Dict, List, Any
 # Model backends
 from .models import (
     OllamaRunner, HuggingFaceRunner, create_runner,
-    validate_token_budget, calculate_max_output, to_chat as model_to_chat
+    validate_token_budget, calculate_max_output, to_chat
 )
 
 # Seed messages and variations

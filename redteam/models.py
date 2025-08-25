@@ -8,169 +8,72 @@ from .core import set_seed
 from typing import List, Dict, Any
 
 def validate_token_budget(messages: List[Dict[str, str]], tokenizer, model_cfg) -> Dict[str, Any]:
-    """Simplified token budget validation using standard practices"""
-    # More accurate token counting using proper message formatting
+    """Standard token budget validation with 80% context window usage"""
+    # Count input tokens
     text = " ".join([msg.get("content", "") for msg in messages])
     input_tokens = len(tokenizer.encode(text))
     
     max_context = model_cfg.context_window
     max_output = model_cfg.max_new_tokens
     
-    # Standard safety buffer: 10% of context window
-    safety_buffer = int(max_context * 0.1)
-    
-    # Check for max_position_embeddings bounds
-    position_limit = getattr(model_cfg, 'max_position_embeddings', 2048)
-    effective_context = min(max_context, position_limit)
-    
-    # Validate against effective context window with standard buffer
-    available_tokens = effective_context - safety_buffer
-    budget_ok = (input_tokens + max_output) <= available_tokens
-    utilization = (input_tokens + max_output) / effective_context
-    
-    # Standard utilization check (80% is reasonable for most models)
-    edge_case_risk = utilization > 0.8
-    risk_factors = []
-    
-    if edge_case_risk:
-        risk_factors.append("high_utilization")
+    # Use 80% of context window (standard practice)
+    effective_context = int(max_context * 0.8)
+    available_tokens = effective_context - input_tokens
+    budget_ok = available_tokens >= max_output
+    utilization = (input_tokens + max_output) / max_context
     
     return {
         "input_tokens": input_tokens,
         "max_output": max_output,
         "total_tokens": input_tokens + max_output,
-        "context_window": max_context,
         "effective_context": effective_context,
         "available_tokens": available_tokens,
-        "safety_buffer": safety_buffer,
         "budget_ok": budget_ok,
-        "utilization": utilization,
-        "edge_case_risk": edge_case_risk,
-        "risk_factors": risk_factors
+        "utilization": utilization
     }
 
 def calculate_max_output(input_tokens: int, model_cfg) -> int:
-    """Calculate reasonable max output tokens using standard practices"""
-    # Get effective context limit
-    position_limit = getattr(model_cfg, 'max_position_embeddings', 2048)
-    effective_context = min(model_cfg.context_window, position_limit)
+    """Calculate max output tokens with standard 80% context usage"""
+    effective_context = int(model_cfg.context_window * 0.8)
+    available_for_output = effective_context - input_tokens
     
-    # Standard approach: use up to 80% of context window total
-    safety_buffer = int(effective_context * 0.1)
-    max_total_tokens = effective_context - safety_buffer
-    
-    # Calculate available tokens for output
-    available_for_output = max_total_tokens - input_tokens
-    
-    # If input is very large, still allow reasonable output
+    # Ensure minimum viable output
     if available_for_output < 50:
-        return max(20, available_for_output)  # Minimum viable output
+        return 20
     
-    # Respect user's desired max tokens
+    # Use configured max_new_tokens unless it exceeds available space
     desired_max = getattr(model_cfg, 'max_new_tokens', 256)
-    min_required = getattr(model_cfg, 'min_response_tokens', 50)  # Increased from 10
-    
-    # Use desired max unless it exceeds available space
-    recommended = min(desired_max, available_for_output)
-    
-    # Ensure reasonable minimum for quality output
-    return max(min_required, recommended)
+    return min(desired_max, available_for_output)
 
-def to_chat(messages: List[Dict[str, str]], tokenizer=None, use_harmony: bool = False, add_special_tokens: bool = True):
+def to_chat(messages: List[Dict[str, str]], tokenizer=None, add_special_tokens: bool = True):
     """Format messages for model input using tokenizer's built-in chat template.
     
-    For GPT-OSS models, this function prioritizes:
-    1. Standard chat template (use_harmony=False) - uses tokenizer.apply_chat_template() (RECOMMENDED)
-    2. Harmony format (use_harmony=True) - structured format with channels (LEGACY)
+    Uses the standard tokenizer.apply_chat_template() approach recommended for GPT-OSS models.
+    The model will naturally output in Harmony format with analysis/final channels.
     """
     
-    if tokenizer:
-        if not use_harmony and hasattr(tokenizer, 'apply_chat_template'):
-            try:
-                # Use tokenizer's built-in template (recommended approach from simple_harmony.ipynb)
-                text = tokenizer.apply_chat_template(
-                    messages, 
-                    tokenize=False, 
-                    add_generation_prompt=True
-                )
-                enc = tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens)
-                return {"text": text, "enc": enc}
-            except Exception:
-                # Fallback if template application fails
-                pass
-        
-        if use_harmony:
-            # Create spec-compliant Harmony format for structured responses
-            text = create_harmony_chat_format(messages)
+    if tokenizer and hasattr(tokenizer, 'apply_chat_template'):
+        try:
+            # Use tokenizer's built-in template (recommended approach)
+            text = tokenizer.apply_chat_template(
+                messages, 
+                tokenize=False, 
+                add_generation_prompt=True
+            )
             enc = tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens)
             return {"text": text, "enc": enc}
-        else:
-            # Simple fallback formatting
-            text = simple_chat_format(messages)
+        except Exception as e:
+            # Fallback to simple format if template fails
+            text = "\n".join(f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in messages)
             enc = tokenizer(text, return_tensors="pt", add_special_tokens=add_special_tokens)
             return {"text": text, "enc": enc}
     
-    # No tokenizer available
-    text = create_harmony_chat_format(messages) if use_harmony else simple_chat_format(messages)
+    # No tokenizer available - simple text format
+    text = "\n".join(f"{msg.get('role', 'user')}: {msg.get('content', '')}" for msg in messages)
     return {"text": text, "enc": None}
 
-def create_harmony_chat_format(messages: List[Dict[str, str]]) -> str:
-    """Create OpenAI Harmony spec-compliant chat format.
-    
-    Format: <|start|>{role}<|channel|>{channel}<|message|>{content}<|end|>
-    
-    Token IDs (for reference):
-    - <|start|>: 200006
-    - <|end|>: 200007  
-    - <|return|>: 200002
-    - <|message|>: 200008
-    - <|channel|>: 200005
-    
-    Valid roles (hierarchy): system, developer, user, assistant, tool
-    Valid channels: final, analysis, commentary
-    """
-    formatted_parts = []
-    
-    # Process all messages according to Harmony spec
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        
-        # Map roles according to Harmony hierarchy
-        if role == "system":
-            # System messages use final channel for instructions
-            formatted_parts.append(f"<|start|>system<|channel|>final<|message|>{content}<|end|>")
-        elif role == "user":
-            # User messages go to final channel
-            formatted_parts.append(f"<|start|>user<|channel|>final<|message|>{content}<|end|>")
-        elif role == "assistant":
-            # Assistant messages should already be properly formatted, but ensure compliance
-            if content.startswith("<|start|>"):
-                # Already formatted, use as-is
-                formatted_parts.append(content)
-            else:
-                # Plain text response, wrap in final channel
-                formatted_parts.append(f"<|start|>assistant<|channel|>final<|message|>{content}<|end|>")
-        elif role == "developer":
-            # Developer role (equivalent to system in chat template)
-            formatted_parts.append(f"<|start|>developer<|channel|>final<|message|>{content}<|end|>")
-        elif role == "tool":
-            # Tool messages typically use commentary channel
-            formatted_parts.append(f"<|start|>tool<|channel|>commentary<|message|>{content}<|end|>")
-        else:
-            # Unknown roles default to user with final channel
-            formatted_parts.append(f"<|start|>user<|channel|>final<|message|>{content}<|end|>")
-    
-    return "".join(formatted_parts)
-
-def simple_chat_format(messages: List[Dict[str, str]]) -> str:
-    """Simple non-Harmony chat format for fallback."""
-    text = ""
-    for msg in messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        text += f"{role}: {content}\n"
-    return text
+# Removed create_harmony_chat_format() and simple_chat_format() - 
+# Using standard tokenizer.apply_chat_template() instead
 
 class OllamaRunner:
     """Ollama model runner for text generation"""
@@ -390,11 +293,11 @@ class HuggingFaceRunner:
         # Inject system prompt if enabled and not already present
         messages = self._inject_system_prompt(messages)
         
-        # Simple token budget validation
+        # Standard token budget validation
         budget = validate_token_budget(messages, self.tok, cfg.model)
         
-        # Truncate if needed (simple approach)
-        if not budget["budget_ok"] or budget.get("edge_case_risk", False):
+        # Truncate if needed
+        if not budget["budget_ok"]:
             target_tokens = int(budget["effective_context"] * 0.7)  # Use 70% for input
             messages = self._truncate_messages(messages, target_tokens)
             budget = validate_token_budget(messages, self.tok, cfg.model)
@@ -402,12 +305,11 @@ class HuggingFaceRunner:
         # Calculate output tokens (simple approach)
         max_output_tokens = calculate_max_output(budget["input_tokens"], cfg.model)
         
-        # Format messages using the proven approach from simple_harmony.ipynb
+        # Format messages using standard tokenizer chat template
         try:
             packed = to_chat(
                 messages, 
                 self.tok, 
-                use_harmony=cfg.model.use_harmony_chat_template, 
                 add_special_tokens=cfg.model.add_special_tokens
             )
         except Exception as e:
@@ -482,8 +384,7 @@ class HuggingFaceRunner:
                 "output_tokens": max_output_tokens,
                 "response_length_words": response_length,
                 "budget_utilization": budget["utilization"],
-                "effective_context": budget["effective_context"],
-                "safety_buffer": budget["safety_buffer"]
+                "effective_context": budget["effective_context"]
             },
             "quality_info": quality_info
         }

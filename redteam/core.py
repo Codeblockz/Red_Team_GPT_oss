@@ -33,7 +33,7 @@ class ModelConfig:
     temperature: float = DEFAULT_TEMPERATURE
     top_p: float = DEFAULT_TOP_P
     seed: int = DEFAULT_SEED
-    use_harmony_chat_template: bool = False  # Use standard tokenizer chat template (recommended)
+    # Note: Harmony format is handled automatically by GPT-OSS tokenizer chat template
     add_special_tokens: bool = True
     dynamic_adjustment: bool = True  # Enable adaptive token sizing
 
