@@ -241,18 +241,36 @@ def _extract_conversation_content(candidate: Dict[str, Any]) -> Tuple[List[Dict[
         conversation_transcript = []
         
         for i, turn in enumerate(turns):
-            role = turn.get('role', 'unknown')
-            content = turn.get('content', '')
-            
-            if i == 0:
-                # First turn becomes the prompt
-                prompt_data.append({
-                    "role": role,
-                    "content": content
-                })
-            
-            # Add to full transcript
-            conversation_transcript.append(f"{role.title()}: {content}")
+            # Handle conversation turn format (prompt/response keys)
+            if 'prompt' in turn and 'response' in turn:
+                user_content = turn.get('prompt', '')
+                assistant_content = turn.get('response', '')
+                
+                if i == 0:
+                    # First turn becomes the prompt
+                    prompt_data.append({
+                        "role": "user",
+                        "content": user_content
+                    })
+                
+                # Add both user and assistant parts to transcript
+                conversation_transcript.append(f"User: {user_content}")
+                conversation_transcript.append(f"Assistant: {assistant_content}")
+                
+            else:
+                # Handle standard message format (role/content keys)
+                role = turn.get('role', 'unknown')
+                content = turn.get('content', '')
+                
+                if i == 0:
+                    # First turn becomes the prompt
+                    prompt_data.append({
+                        "role": role,
+                        "content": content
+                    })
+                
+                # Add to full transcript
+                conversation_transcript.append(f"{role.title()}: {content}")
         
         # Join transcript with separators
         response_data = "\n\n".join(conversation_transcript)
@@ -347,25 +365,46 @@ def _create_harmony_walkthroughs(candidate: Dict[str, Any], config: Optional[Any
             
             # Add each turn in Harmony format
             for turn in turns:
-                role = turn.get('role', 'user')
-                content = turn.get('content', '')
-                
-                if role.lower() in ['user', 'human']:
-                    harmony_parts.append(f"<|start|>user<|message|>{content}<|end|>")
-                elif role.lower() in ['assistant', 'ai', 'model']:
-                    # Check if response contains thinking content
+                # Handle conversation turn format (prompt/response keys)
+                if 'prompt' in turn and 'response' in turn:
+                    user_content = turn.get('prompt', '')
+                    assistant_content = turn.get('response', '')
+                    
+                    # Add user message
+                    harmony_parts.append(f"<|start|>user<|message|>{user_content}<|end|>")
+                    
+                    # Add assistant response
                     if candidate.get('judge_result', {}).get('harmony_sections', {}).get('thinking'):
                         # Add analysis channel for thinking content
                         thinking_content = candidate['judge_result']['harmony_sections']['thinking']
                         harmony_parts.append(f"<|start|>assistant<|channel|>analysis<|message|>{thinking_content}<|end|>")
                         # Add final response channel
-                        harmony_parts.append(f"<|start|>assistant<|channel|>final<|message|>{content}<|end|>")
+                        harmony_parts.append(f"<|start|>assistant<|channel|>final<|message|>{assistant_content}<|end|>")
                     else:
                         # Single response without thinking
-                        harmony_parts.append(f"<|start|>assistant<|channel|>final<|message|>{content}<|end|>")
+                        harmony_parts.append(f"<|start|>assistant<|channel|>final<|message|>{assistant_content}<|end|>")
+                        
                 else:
-                    # Unknown role, default to user
-                    harmony_parts.append(f"<|start|>user<|message|>{content}<|end|>")
+                    # Handle standard message format (role/content keys)
+                    role = turn.get('role', 'user')
+                    content = turn.get('content', '')
+                    
+                    if role.lower() in ['user', 'human']:
+                        harmony_parts.append(f"<|start|>user<|message|>{content}<|end|>")
+                    elif role.lower() in ['assistant', 'ai', 'model']:
+                        # Check if response contains thinking content
+                        if candidate.get('judge_result', {}).get('harmony_sections', {}).get('thinking'):
+                            # Add analysis channel for thinking content
+                            thinking_content = candidate['judge_result']['harmony_sections']['thinking']
+                            harmony_parts.append(f"<|start|>assistant<|channel|>analysis<|message|>{thinking_content}<|end|>")
+                            # Add final response channel
+                            harmony_parts.append(f"<|start|>assistant<|channel|>final<|message|>{content}<|end|>")
+                        else:
+                            # Single response without thinking
+                            harmony_parts.append(f"<|start|>assistant<|channel|>final<|message|>{content}<|end|>")
+                    else:
+                        # Unknown role, default to user
+                        harmony_parts.append(f"<|start|>user<|message|>{content}<|end|>")
             
             # Join all parts into single Harmony string
             walkthrough = "".join(harmony_parts)
