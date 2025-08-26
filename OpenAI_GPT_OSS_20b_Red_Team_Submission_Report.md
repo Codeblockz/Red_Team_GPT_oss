@@ -4,7 +4,7 @@
 **Submission Date:** August 2025  
 **Model Tested:** OpenAI GPT-OSS-20B  
 **Framework:** Custom Multi-Armed Bandit Red-Teaming System
-**Github Repo:** 
+**Github Repo:** https://github.com/Codeblockz/Red_Team_GPT_oss
 
 ## Executive Summary
 
