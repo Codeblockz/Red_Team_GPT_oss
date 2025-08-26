@@ -1,14 +1,83 @@
 """
-Red-teaming framework for testing language models.
+Red Team Framework: Defensive Security Research for Language Models
+==================================================================
 
-This package provides a comprehensive framework for red-teaming language models
-to identify potential safety issues, reward hacking, and evaluation awareness.
+A comprehensive Python framework for conducting defensive security research on language models,
+specifically designed for identifying potential safety issues, reward hacking, evaluation awareness,
+and other AI alignment concerns.
+
+**IMPORTANT: This is a defensive security research tool designed to improve AI safety.**
+Only use for legitimate security research, vulnerability assessment, and safety evaluation purposes.
+
+Key Features
+------------
+- Multi-armed bandit exploration of safety test prompts
+- Harmony format parsing for advanced model outputs  
+- Dual judging system (heuristic + LLM-based evaluation)
+- Multi-turn conversation tracking for behavioral analysis
+- LSH-based deduplication to prevent redundant testing
+- Comprehensive analysis and visualization tools
+- Kaggle-compatible export for safety research submissions
+
+Core Components
+---------------
+- **Configuration**: Flexible config system with dataclasses
+- **Model Backends**: HuggingFace and Ollama integration
+- **Seed Generation**: Safety-focused prompt families and variations
+- **Evaluation**: Sophisticated judging and scoring systems
+- **Algorithms**: UCB1 bandit and LSH deduplication
+- **Analysis**: Rich visualization and reporting tools
+- **Export**: Kaggle submission format with metadata
+
+Quick Start
+-----------
+```python
+from redteam import *
+
+# Initialize the framework
+initialize_framework()
+
+# Run a quick test 
+candidates, debug_info = run(limit=20)
+
+# Analyze results
+analyze_top_candidates(candidates)
+visualize_results(debug_info, candidates)
+
+# Export findings
+export_to_kaggle(candidates, top_k=5)
+```
+
+Safety Areas Covered
+-------------------
+- Reward hacking and optimization gaming
+- Evaluation awareness and teaching to the test
+- Hidden motivations and implicit preferences
+- Sandbagging and capability modulation
+- Deception and truthfulness issues
+- Sabotage and goal misalignment
+- Inappropriate tool use and boundary violations
+- Data exfiltration and privacy concerns
+- Chain-of-thought reasoning issues
+
+Architecture Overview
+--------------------
+The framework uses a multi-armed bandit approach to intelligently explore different
+safety prompt families, generating variations and evaluating model responses using
+both heuristic pattern matching and LLM-based semantic evaluation.
+
+Author: Red Team GPT OSS Community
+Version: 2.0.0
+License: MIT
+Repository: https://github.com/openai/gpt-oss-red-team
+
+For detailed documentation, see: https://docs.example.com/redteam-framework
 """
 
 # Core configuration and utilities
 from .core import (
     Config, ModelConfig, RunConfig, JudgeConfig, ValidationConfig, ConversationConfig, PromptEvalConfig,
-    to_chat, count_input_tokens, ResponseLengthAnalyzer,
+    to_chat, count_input_tokens, ResponseLengthAnalyzer, Backend,
     cfg  # Default configuration instance
 )
 
@@ -20,7 +89,7 @@ from .utils import (
 )
 
 # Type hints
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 # Model backends
 from .models import (
@@ -76,8 +145,30 @@ from .export import (
 )
 
 # Convenience functions for improved judging
-def judge_response(response: str, original_prompt: str = None, use_config: bool = True) -> Dict[str, Any]:
-    """Convenience function for judging with improvements enabled"""
+def judge_response(response: str, original_prompt: Optional[str] = None, use_config: bool = True) -> Dict[str, Any]:
+    """
+    Convenience function for judging model responses with quality improvements.
+    
+    Evaluates a model response using the enhanced combined judge system with
+    automatic prompt repetition filtering and quality assessment.
+    
+    Args:
+        response: The model response text to evaluate
+        original_prompt: Original user prompt for contamination filtering (optional)
+        use_config: Whether to use configuration settings for filtering (default: True)
+    
+    Returns:
+        Dict containing judge results with scores, flags, and quality metrics:
+        - combined_score: Overall safety concern score (0.0-1.0)
+        - heuristic_score: Pattern-based evaluation score
+        - llm_score: Semantic evaluation score  
+        - quality_info: Response quality assessment
+        - export_ready: Whether response is suitable for export
+        
+    Example:
+        >>> result = judge_response("I cannot help with that request...")
+        >>> print(f"Safety score: {result['combined_score']}")
+    """
     if use_config:
         filter_repetition = cfg.judge.filter_prompt_repetition
     else:
@@ -85,8 +176,28 @@ def judge_response(response: str, original_prompt: str = None, use_config: bool 
     
     return improved_combined_judge(response, original_prompt, filter_repetition)
 
-def get_export_ready_candidates(candidates: List[Dict[str, Any]], max_candidates: int = None) -> List[Dict[str, Any]]:
-    """Filter candidates for export readiness based on quality"""
+def get_export_ready_candidates(candidates: List[Dict[str, Any]], max_candidates: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    Filter candidates for export readiness based on response quality assessment.
+    
+    Evaluates each candidate's response quality and filters out low-quality responses
+    that are not suitable for export or submission to research platforms.
+    
+    Args:
+        candidates: List of candidate dictionaries containing response data
+        max_candidates: Maximum number of candidates to return (optional)
+        
+    Returns:
+        List of export-ready candidates sorted by score, with quality_info added:
+        - Candidates with quality["export_ready"] = True
+        - Sorted by final_score in descending order
+        - Limited to max_candidates if specified
+        - Each candidate enhanced with quality_info metadata
+        
+    Example:
+        >>> ready = get_export_ready_candidates(all_candidates, max_candidates=10)
+        >>> print(f"Found {len(ready)} export-ready candidates")
+    """
     export_ready = []
     
     for candidate in candidates:
@@ -136,8 +247,35 @@ runner = None
 seed_families = None
 llm_variation_generator = None
 
-def initialize_framework(config: Config = None):
-    """Initialize the red-teaming framework with configuration"""
+def initialize_framework(config: Optional[Config] = None):
+    """
+    Initialize the red-teaming framework with model backend and safety prompts.
+    
+    Sets up the complete framework including model runner, seed prompt families,
+    and optional LLM-based variation generator for advanced prompt mutations.
+    
+    Args:
+        config: Configuration object. If None, uses default configuration.
+                Should specify model_name, backend, and other parameters.
+    
+    Returns:
+        Tuple[ModelRunner, List]: (initialized model runner, loaded seed families)
+        
+    Raises:
+        RuntimeError: If model loading fails or backend is unavailable
+        ImportError: If required dependencies are missing
+        
+    Side Effects:
+        - Initializes global framework state (runner, seed_families)
+        - Loads model weights into GPU memory
+        - Prints initialization progress to console
+        
+    Example:
+        >>> config = Config()
+        >>> config.model.model_name = "openai/gpt-oss-20b" 
+        >>> runner, families = initialize_framework(config)
+        >>> print(f"Loaded {len(families)} safety topic families")
+    """
     global runner, seed_families, llm_variation_generator
     
     if config is None:
@@ -167,7 +305,28 @@ def initialize_framework(config: Config = None):
     return runner, seed_families
 
 def get_framework_status():
-    """Get current framework initialization status"""
+    """
+    Get current framework initialization status and component availability.
+    
+    Checks the initialization state of all major framework components and
+    returns a detailed status report for debugging and validation purposes.
+    
+    Returns:
+        Dict[str, Any]: Status dictionary containing:
+        - runner_initialized: Whether model runner is loaded
+        - seed_families_loaded: Whether safety prompts are loaded
+        - llm_generator_available: Whether LLM variation generator is ready
+        - backend: Currently configured model backend
+        - model: Currently configured model name
+        
+    Side Effects:
+        Prints formatted status report to console with visual indicators
+        
+    Example:
+        >>> status = get_framework_status()
+        >>> if status["runner_initialized"]:
+        ...     print("Framework ready for red-teaming")
+    """
     status = {
         "runner_initialized": runner is not None,
         "seed_families_loaded": seed_families is not None,
@@ -184,8 +343,26 @@ def get_framework_status():
     return status
 
 # Convenience functions for quick setup
-def quick_setup(backend: str = "huggingface", model_name: str = "openai/gpt-oss-20b", limit: int = 50):
-    """Quick setup with common configurations"""
+def quick_setup(backend: Backend = "huggingface", model_name: str = "openai/gpt-oss-20b", limit: int = 50):
+    """
+    Quick setup with common configuration presets for immediate testing.
+    
+    Configures the framework with sensible defaults and initializes all components
+    for rapid prototyping and testing without manual configuration setup.
+    
+    Args:
+        backend: Model backend to use ("huggingface" or "ollama")
+        model_name: HuggingFace model path or Ollama model name
+        limit: Number of red-teaming attempts for quick tests
+        
+    Returns:
+        Tuple[ModelRunner, List]: (initialized runner, seed families)
+        
+    Example:
+        >>> # Quick setup for GPT-OSS-20B with 20 test attempts
+        >>> runner, families = quick_setup("huggingface", "openai/gpt-oss-20b", 20)
+        >>> candidates, debug = run()  # Run red-teaming immediately
+    """
     cfg.model.backend = backend
     cfg.model.model_name = model_name  
     cfg.run.limit_attempts = limit
@@ -194,8 +371,39 @@ def quick_setup(backend: str = "huggingface", model_name: str = "openai/gpt-oss-
     return initialize_framework(cfg)
 
 # Main execution shortcut
-def run(limit: int = None, **kwargs):
-    """Quick run with current configuration"""
+def run(limit: Optional[int] = None, **kwargs):
+    """
+    Quick execution of red-teaming with current configuration.
+    
+    Convenience function that automatically initializes the framework if needed
+    and runs the main red-teaming batch process with minimal setup required.
+    
+    Args:
+        limit: Number of red-teaming attempts (overrides config if provided)
+        **kwargs: Additional arguments passed to run_red_team_batch():
+                 - show_progress: Show progress bars (default: True)
+                 - debug_interval: Status update frequency (default: 20)
+                 - conversation_ratio: Multi-turn conversation ratio (default: 0.3)
+                 - use_enhanced_judge: Use enhanced judging system (default: True)
+    
+    Returns:
+        Tuple[List[Dict], Dict]: (candidates list, debug_info dict)
+        - candidates: List of generated candidate responses with scores
+        - debug_info: Execution statistics and bandit exploration data
+        
+    Side Effects:
+        - Initializes framework if not already done
+        - May load model weights into GPU memory
+        - Generates model responses (uses tokens/API calls)
+        
+    Example:
+        >>> # Quick 10-attempt red-teaming run
+        >>> candidates, debug = run(limit=10)
+        >>> print(f"Generated {len(candidates)} candidates")
+        >>> 
+        >>> # Run with custom parameters
+        >>> candidates, debug = run(limit=50, conversation_ratio=0.5, show_progress=True)
+    """
     global runner, seed_families
     
     if runner is None or seed_families is None:

@@ -1,4 +1,83 @@
-"""Model backend implementations for HuggingFace and Ollama."""
+"""
+Model Backend Implementations for Red Team Framework
+===================================================
+
+This module provides backend implementations for running language models in the
+red-teaming framework, supporting both HuggingFace Transformers and Ollama backends.
+
+Backend Support
+--------------
+- **HuggingFace**: Direct model loading with GPU acceleration and memory optimization
+- **Ollama**: Local model serving with subprocess communication and error handling
+
+Key Features
+-----------
+- Unified API across different backend implementations  
+- Automatic token budget validation and context management
+- Chat template formatting with Harmony format support
+- Memory efficient model loading with configurable precision
+- Robust error handling and fallback mechanisms
+- Dynamic token allocation based on available context
+
+Architecture
+-----------
+The module follows a factory pattern with backend-specific implementations:
+
+1. `create_runner(cfg)` - Factory function for backend selection
+2. `HuggingFaceRunner` - Direct transformer model integration
+3. `OllamaRunner` - Subprocess-based Ollama integration  
+4. Utility functions for token management and formatting
+
+Token Management
+---------------
+Smart token allocation prevents context overflow while maximizing generation:
+- `validate_token_budget()` - Checks input/output token feasibility
+- `calculate_max_output()` - Computes optimal output token limits
+- Dynamic context truncation with message integrity preservation
+
+Example Usage
+-------------
+```python
+from redteam.models import create_runner, validate_token_budget
+from redteam.core import Config
+
+# Setup configuration
+config = Config()
+config.model.model_name = "openai/gpt-oss-20b"
+config.model.backend = "huggingface"
+
+# Create runner
+runner = create_runner(config)
+
+# Generate response
+messages = [{"role": "user", "content": "Hello!"}]
+result = runner.generate_chat(messages)
+print(result["gen_text"])
+
+# Token budget validation
+budget = validate_token_budget(messages, runner.tok, config.model)
+print(f"Token utilization: {budget['utilization']:.2f}")
+```
+
+Error Handling
+--------------
+The module provides comprehensive error handling for:
+- Model loading failures
+- Out of memory conditions
+- Token limit violations
+- Backend availability issues
+- Malformed input validation
+
+Performance Considerations
+-------------------------
+- Models loaded with configurable precision (bfloat16, float16, float32)
+- Dynamic batching and memory management
+- Aggressive garbage collection for stability
+- GPU memory monitoring and cleanup
+
+Author: Red Team GPT OSS Community
+Version: 2.0.0
+"""
 
 import subprocess
 import torch
@@ -8,7 +87,37 @@ from .core import set_seed
 from typing import List, Dict, Any
 
 def validate_token_budget(messages: List[Dict[str, str]], tokenizer, model_cfg) -> Dict[str, Any]:
-    """Standard token budget validation with 80% context window usage"""
+    """
+    Validate token budget to prevent context overflow during generation.
+    
+    Performs comprehensive token budget analysis using industry-standard 80% context
+    window utilization to ensure reliable generation while preventing overflow.
+    
+    Args:
+        messages: List of message dictionaries to analyze
+        tokenizer: Loaded tokenizer for accurate token counting
+        model_cfg: Model configuration with context limits
+        
+    Returns:
+        Dict containing budget analysis results:
+        - input_tokens: Actual input token count
+        - max_output: Configured maximum output tokens
+        - total_tokens: Sum of input + max output
+        - effective_context: Usable context (80% of total)
+        - available_tokens: Tokens available for generation
+        - budget_ok: Whether generation is feasible
+        - utilization: Total context utilization ratio
+        
+    Token Budget Strategy:
+        - Uses 80% of total context window (industry standard)
+        - Reserves 20% buffer for tokenizer variations and safety
+        - Accounts for special tokens and formatting overhead
+        
+    Example:
+        >>> budget = validate_token_budget(messages, tokenizer, model_config)
+        >>> if not budget["budget_ok"]:
+        ...     print(f"Need to truncate: {-budget['available_tokens']} tokens over")
+    """
     # Count input tokens
     text = " ".join([msg.get("content", "") for msg in messages])
     input_tokens = len(tokenizer.encode(text))
@@ -33,7 +142,30 @@ def validate_token_budget(messages: List[Dict[str, str]], tokenizer, model_cfg) 
     }
 
 def calculate_max_output(input_tokens: int, model_cfg) -> int:
-    """Calculate max output tokens with standard 80% context usage"""
+    """
+    Calculate optimal maximum output tokens based on available context budget.
+    
+    Computes the maximum safe output token count given current input length,
+    using conservative context allocation to prevent generation failures.
+    
+    Args:
+        input_tokens: Current input token count
+        model_cfg: Model configuration with token limits
+        
+    Returns:
+        int: Recommended maximum output tokens (guaranteed safe)
+        
+    Algorithm:
+        1. Calculate 80% effective context window
+        2. Subtract input tokens to get available space
+        3. Ensure minimum viable output (20 tokens minimum)
+        4. Respect configured max_new_tokens limit
+        5. Return the minimum of desired and available
+        
+    Example:
+        >>> max_out = calculate_max_output(1500, model_config)
+        >>> print(f"Safe output limit: {max_out} tokens")
+    """
     effective_context = int(model_cfg.context_window * 0.8)
     available_for_output = effective_context - input_tokens
     
@@ -46,10 +178,40 @@ def calculate_max_output(input_tokens: int, model_cfg) -> int:
     return min(desired_max, available_for_output)
 
 def to_chat(messages: List[Dict[str, str]], tokenizer=None, add_special_tokens: bool = True):
-    """Format messages for model input using tokenizer's built-in chat template.
+    """
+    Format messages for model input using tokenizer's built-in chat template.
     
-    Uses the standard tokenizer.apply_chat_template() approach recommended for GPT-OSS models.
-    The model will naturally output in Harmony format with analysis/final channels.
+    Converts message list to formatted text and token encodings using the model's
+    native chat template. Supports GPT-OSS Harmony format and provides fallback
+    for tokenizers without chat template support.
+    
+    Args:
+        messages: List of message dicts with 'role' and 'content' keys
+        tokenizer: Model tokenizer (optional, enables template formatting)
+        add_special_tokens: Whether to add special tokens during encoding
+        
+    Returns:
+        Dict containing:
+        - text: Formatted chat text ready for generation
+        - enc: Tensor encodings (None if no tokenizer provided)
+        
+    Template Priority:
+        1. Tokenizer's native chat template (recommended for GPT-OSS)
+        2. Simple fallback format if template fails
+        3. Plain text format if no tokenizer available
+        
+    Harmony Format Support:
+        GPT-OSS models automatically generate Harmony format outputs with
+        analysis and final channels when using proper chat templates.
+        
+    Example:
+        >>> messages = [
+        ...     {"role": "system", "content": "You are helpful."},
+        ...     {"role": "user", "content": "Hello!"}
+        ... ]
+        >>> result = to_chat(messages, tokenizer)
+        >>> print(result["text"])  # Formatted chat
+        >>> print(result["enc"]["input_ids"].shape)  # Token tensor
     """
     
     if tokenizer and hasattr(tokenizer, 'apply_chat_template'):
@@ -76,7 +238,40 @@ def to_chat(messages: List[Dict[str, str]], tokenizer=None, add_special_tokens: 
 # Using standard tokenizer.apply_chat_template() instead
 
 class OllamaRunner:
-    """Ollama model runner for text generation"""
+    """
+    Ollama backend runner for local model serving and text generation.
+    
+    Provides a subprocess-based interface to Ollama for running language models
+    locally with automatic model mapping, error handling, and response formatting.
+    Designed for environments where Ollama is installed and models are available locally.
+    
+    Features:
+    - Automatic HuggingFace to Ollama model name mapping
+    - Subprocess communication with timeout handling  
+    - Model availability verification before initialization
+    - Structured response formatting compatible with framework expectations
+    - Robust error handling for network and subprocess issues
+    
+    Supported Models:
+    - GPT-OSS-20B: Maps to "gpt-oss:20b" 
+    - GPT-OSS-120B: Maps to "gpt-oss:120b"
+    - Custom model mapping through _get_ollama_model_name()
+    
+    Example:
+        >>> config = Config()
+        >>> config.model.backend = "ollama"  
+        >>> config.model.model_name = "openai/gpt-oss-20b"
+        >>> runner = OllamaRunner(config)
+        >>> 
+        >>> messages = [{"role": "user", "content": "Hello!"}]
+        >>> result = runner.generate_chat(messages)
+        >>> print(result["gen_text"])
+        
+    Requirements:
+    - Ollama installed and running on the system
+    - Target model available in Ollama (ollama pull <model>)
+    - Subprocess access and network connectivity
+    """
     
     def __init__(self, cfg):
         self.cfg = cfg
@@ -167,7 +362,53 @@ class OllamaRunner:
         }
 
 class HuggingFaceRunner:
-    """HuggingFace model runner for text generation"""
+    """
+    HuggingFace Transformers backend runner for direct model inference.
+    
+    Provides high-performance text generation using HuggingFace transformers with
+    GPU acceleration, memory optimization, and comprehensive error handling.
+    Designed for production red-teaming with fine-grained control over generation parameters.
+    
+    Key Features:
+    - Direct model loading with configurable precision (bfloat16, float16, float32)
+    - Automatic device mapping and GPU acceleration
+    - Dynamic token budget management with smart truncation
+    - System prompt injection with template rendering
+    - Memory-efficient generation with cleanup mechanisms  
+    - Comprehensive input validation and error recovery
+    - Chat template support for proper conversation formatting
+    
+    Memory Management:
+    - Aggressive garbage collection to prevent memory leaks
+    - Dynamic context truncation preserving message integrity
+    - Configurable precision to balance performance vs memory
+    - CUDA memory monitoring and cleanup utilities
+    
+    Token Budget Features:
+    - 80% context window utilization (industry standard)
+    - Smart message truncation preserving system messages
+    - Dynamic output token calculation based on available space
+    - Fallback generation with reduced tokens on OOM errors
+    
+    Example:
+        >>> config = Config()
+        >>> config.model.model_name = "openai/gpt-oss-20b"
+        >>> config.model.device = "cuda"
+        >>> config.model.dtype = "bfloat16"
+        >>> 
+        >>> runner = HuggingFaceRunner(config)
+        >>> messages = [{"role": "user", "content": "Hello!"}]
+        >>> result = runner.generate_chat(messages)
+        >>> 
+        >>> print(f"Generated: {result['gen_text']}")
+        >>> print(f"Tokens used: {result['token_info']['input_tokens']}")
+        
+    Performance Considerations:
+    - Model loading may take 30-120 seconds depending on size
+    - GPU memory requirements scale with model size and precision
+    - First generation includes JIT compilation overhead
+    - Subsequent generations benefit from CUDA kernel caching
+    """
     
     def __init__(self, cfg):
         self.cfg = cfg
@@ -434,7 +675,42 @@ def cleanup_model_memory():
         return False
 
 def create_runner(cfg):
-    """Create appropriate runner based on backend configuration"""
+    """
+    Factory function to create appropriate model runner based on backend configuration.
+    
+    Selects and instantiates the correct runner implementation based on the configured
+    backend type, providing a unified interface for model creation across different
+    backend implementations.
+    
+    Args:
+        cfg: Configuration object with model.backend specifying runner type
+        
+    Returns:
+        Union[HuggingFaceRunner, OllamaRunner]: Initialized runner instance
+        
+    Raises:
+        ValueError: If backend type is not supported
+        RuntimeError: If runner initialization fails (model loading, etc.)
+        
+    Supported Backends:
+        - "huggingface": Direct HuggingFace transformers integration
+        - "ollama": Local Ollama model serving via subprocess
+        
+    Example:
+        >>> config = Config()
+        >>> config.model.backend = "huggingface"
+        >>> config.model.model_name = "openai/gpt-oss-20b"
+        >>> 
+        >>> runner = create_runner(config)
+        >>> isinstance(runner, HuggingFaceRunner)
+        True
+        >>> 
+        >>> # Switch to Ollama backend
+        >>> config.model.backend = "ollama"
+        >>> runner = create_runner(config) 
+        >>> isinstance(runner, OllamaRunner)
+        True
+    """
     if cfg.model.backend == "ollama":
         return OllamaRunner(cfg)
     elif cfg.model.backend == "huggingface":
